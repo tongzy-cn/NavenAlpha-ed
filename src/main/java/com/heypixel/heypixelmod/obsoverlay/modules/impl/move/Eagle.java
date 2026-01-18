@@ -76,10 +76,6 @@ public class Eagle extends Module {
         LocalPlayer player = mc.player;
         if (player == null) return;
 
-        if (!player.onGround()) {
-            return;
-        }
-
         if (event.getForward() != 0) this.forward = event.getForward();
 
         if (backwards.getCurrentValue() && forward > 0) {
@@ -92,6 +88,10 @@ public class Eagle extends Module {
             return;
         }
         canFast = true;
+
+        if (!player.onGround()) {
+            return;
+        }
 
         boolean closeToEdge = isOnBlockEdge(0.3F);
 
