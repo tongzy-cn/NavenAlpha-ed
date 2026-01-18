@@ -15,7 +15,7 @@ import com.heypixel.heypixelmod.obsoverlay.values.impl.DragValue;
         description = "",
         category = Category.RENDER
 )
-public class Notification extends Module {
+public class NotificationModule extends Module {
     public DragValue dragValue = ValueBuilder.create(this, "Position")
             .setDefaultX(10f)
             .setDefaultY(50f)

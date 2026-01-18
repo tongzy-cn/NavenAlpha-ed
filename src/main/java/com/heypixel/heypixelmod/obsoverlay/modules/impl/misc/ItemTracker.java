@@ -50,9 +50,9 @@ public class ItemTracker extends Module {
 
         for (Entity entity : mc.level.entitiesForRendering()) {
             if (entity != mc.player && entity instanceof AbstractClientPlayer) {
-                double x = MathUtils.interpolate(renderPartialTicks, entity.xo, entity.getX());
-                double y = MathUtils.interpolate(renderPartialTicks, entity.yo, entity.getY()) + (double) entity.getBbHeight();
-                double z = MathUtils.interpolate(renderPartialTicks, entity.zo, entity.getZ());
+                double x = interpolate(renderPartialTicks, entity.xo, entity.getX());
+                double y = interpolate(renderPartialTicks, entity.yo, entity.getY()) + (double) entity.getBbHeight();
+                double z = interpolate(renderPartialTicks, entity.zo, entity.getZ());
                 Vector2f vector = ProjectionUtils.project(x, y, z, renderPartialTicks);
                 this.entityPositions
                         .add(new ItemTracker.TargetInfo((AbstractClientPlayer) entity, vector, EntityWatcher.getEntityTags((AbstractClientPlayer) entity)));
@@ -192,5 +192,18 @@ public class ItemTracker extends Module {
         public String toString() {
             return "ItemTracker.TargetInfo(player=" + this.getPlayer() + ", position=" + this.getPosition() + ", description=" + this.getDescription() + ")";
         }
+    }
+
+
+    public static float interpolate(float delta, float start, float end) {
+        return start + delta * (end - start);
+    }
+
+    public static double interpolate(double delta, double start, float end) {
+        return start + delta * ((double) end - start);
+    }
+
+    public static double interpolate(float delta, double start, double end) {
+        return start + (double) delta * (end - start);
     }
 }

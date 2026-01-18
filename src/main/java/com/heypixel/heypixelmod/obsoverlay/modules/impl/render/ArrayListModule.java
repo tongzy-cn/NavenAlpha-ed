@@ -77,6 +77,7 @@ public class ArrayListModule extends Module {
     private final Path blurPath = new Path();
     private final Paint blurPaint = new Paint();
 
+    private static final Color BACKGROUND_COLOR = new Color(0, 0, 0, 100);
 
     @EventTarget
     public void onSkia(EventRenderSkia event) {
@@ -145,11 +146,11 @@ public class ArrayListModule extends Module {
                 listPaint.setAlpha((int) (255 * (animation.value / 100.0f)));
                 Skia.getCanvas().saveLayer(Rect.makeXYWH(startX, startY, fullWidth, height), listPaint);
                 if (animation.value >= 75) blurMatrices.add(new Vector4f(startX, startY, width, height));
-                Skia.drawRoundedRect(startX, startY, width, height, margen, new Color(0, 0, 0, 100));
+                Skia.drawRoundedRect(startX, startY, width, height, margen, BACKGROUND_COLOR);
                 Skia.drawText(text, startX + margen, startY + margen, color, miSans);
 
                 if (animation.value >= 75) blurMatrices.add(new Vector4f(iconStartX, startY, iconWidth, height));
-                Skia.drawRoundedRect(iconStartX, startY, iconWidth, height, margen, new Color(0, 0, 0, 100));
+                Skia.drawRoundedRect(iconStartX, startY, iconWidth, height, margen, BACKGROUND_COLOR);
                 Skia.drawText(m.getCategory().getIcon(), iconStartX + margen, startY + margen, Color.WHITE, icon);
 
                 Skia.restore();

@@ -20,6 +20,8 @@ import org.lwjgl.opengl.GL11;
         category = Category.RENDER
 )
 public class PostProcess extends Module {
+    private static PostProcess instance;
+
     private final FloatValue blurFPS = ValueBuilder.create(this, "Blur FPS")
             .setFloatStep(1.0F)
             .setDefaultFloatValue(90.0F)
@@ -34,6 +36,15 @@ public class PostProcess extends Module {
             .setFloatStep(1.0F)
             .build()
             .getFloatValue();
+    
+    private final BooleanValue glow = ValueBuilder.create(this, "Glow")
+            .setDefaultBooleanValue(true)
+            .build()
+            .getBooleanValue();
+
+    public PostProcess() {
+        instance = this;
+    }
 
     @Override
     public void onEnable() {
@@ -46,5 +57,9 @@ public class PostProcess extends Module {
 
     public int getBlurFPS() {
         return (int) blurFPS.getCurrentValue();
+    }
+    
+    public static boolean isGlowEnabled() {
+        return instance != null && instance.glow.getCurrentValue();
     }
 }

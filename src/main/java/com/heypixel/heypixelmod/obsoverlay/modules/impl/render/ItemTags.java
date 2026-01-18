@@ -151,9 +151,9 @@ public class ItemTags extends Module {
         for (Entity entity : mc.level.entitiesForRendering()) {
             if (entity instanceof ItemEntity itemEntity) {
                 if (this.isValidItem(itemEntity.getItem())) {
-                    double x = MathUtils.interpolate(renderPartialTicks, entity.xo, entity.getX());
-                    double y = MathUtils.interpolate(renderPartialTicks, entity.yo, entity.getY()) + (double) entity.getBbHeight() + 0.5;
-                    double z = MathUtils.interpolate(renderPartialTicks, entity.zo, entity.getZ());
+                    double x = interpolate(renderPartialTicks, entity.xo, entity.getX());
+                    double y = interpolate(renderPartialTicks, entity.yo, entity.getY()) + (double) entity.getBbHeight() + 0.5;
+                    double z = interpolate(renderPartialTicks, entity.zo, entity.getZ());
                     Vector2f vector = ProjectionUtils.project(x, y, z, renderPartialTicks);
                     vector.setY(vector.getY() - 2.0F);
                     this.entityPositions.put(itemEntity, vector);
@@ -219,5 +219,18 @@ public class ItemTags extends Module {
             }
         } catch (Exception var9) {
         }
+    }
+
+
+    public static float interpolate(float delta, float start, float end) {
+        return start + delta * (end - start);
+    }
+
+    public static double interpolate(double delta, double start, float end) {
+        return start + delta * ((double) end - start);
+    }
+
+    public static double interpolate(float delta, double start, double end) {
+        return start + (double) delta * (end - start);
     }
 }

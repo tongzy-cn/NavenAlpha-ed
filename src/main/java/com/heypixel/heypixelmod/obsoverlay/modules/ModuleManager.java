@@ -109,12 +109,13 @@ public class ModuleManager {
                 new HUDEditModule(),
                 new Watermark(),
                 new TargetHUD(),
-                new Notification(),
+                new NotificationModule(),
                 new AutoHeypixel(),
                 new ArrayListModule(),
 //                new Speed(),
                 new GrimLowHop(),
-                new AimAssist()
+                new AimAssist(),
+                new MiddleClick()
         );
     }
 

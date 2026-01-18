@@ -17,6 +17,7 @@ import com.heypixel.heypixelmod.obsoverlay.utils.renderer.Fonts;
 import com.heypixel.heypixelmod.obsoverlay.utils.renderer.PostProcessRenderer;
 import com.heypixel.heypixelmod.obsoverlay.utils.renderer.Shaders;
 import com.heypixel.heypixelmod.obsoverlay.utils.rotation.RotationManager;
+import com.heypixel.heypixelmod.obsoverlay.utils.skia.Skia;
 import com.heypixel.heypixelmod.obsoverlay.utils.skia.context.SkiaContext;
 import com.heypixel.heypixelmod.obsoverlay.values.HasValueManager;
 import com.heypixel.heypixelmod.obsoverlay.values.ValueManager;
@@ -130,6 +131,7 @@ public class Naven {
         this.eventManager.register(new NetworkUtils());
         this.eventManager.register(new ServerUtils());
         this.eventManager.register(new EntityWatcher());
+        this.eventManager.register(new Skia.SkiaEventHandler());
         MinecraftForge.EVENT_BUS.register(this.eventWrapper);
         canPlaySound = true;
         SoundUtils.playSound("opening.wav", 1f);

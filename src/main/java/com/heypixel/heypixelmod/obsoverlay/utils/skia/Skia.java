@@ -1,5 +1,8 @@
 package com.heypixel.heypixelmod.obsoverlay.utils.skia;
 
+import com.heypixel.heypixelmod.obsoverlay.events.api.EventTarget;
+import com.heypixel.heypixelmod.obsoverlay.events.impl.EventRenderSkia;
+import com.heypixel.heypixelmod.obsoverlay.modules.impl.render.PostProcess;
 import com.heypixel.heypixelmod.obsoverlay.utils.shader.impl.KawaseBlur;
 import com.heypixel.heypixelmod.obsoverlay.utils.skia.context.SkiaContext;
 import com.heypixel.heypixelmod.obsoverlay.utils.skia.image.ImageHelper;
@@ -23,11 +26,67 @@ import net.minecraftforge.registries.ForgeRegistries;
 
 import java.awt.Color;
 import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 
 public class Skia {
 
     public static final Minecraft mc = Minecraft.getInstance();
     private static final ImageHelper imageHelper = new ImageHelper();
+
+    // Optimization: Pre-allocate filters
+    private static final ImageFilter BLUR_1PX = ImageFilter.makeBlur(1.0F, 1.0F, FilterTileMode.DECAL);
+    private static final ImageFilter BLUR_2_5PX = ImageFilter.makeBlur(2.5F, 2.5F, FilterTileMode.DECAL);
+
+    // Batch rendering tasks
+    private static final List<TextGlowTask> glowTasks = new ArrayList<>();
+    
+    // Helper class for batch rendering
+    public static class SkiaEventHandler {
+        @EventTarget(1)
+        public void onShader(EventRenderSkia event) {
+            renderGlows();
+        }
+    }
+
+    private static class TextGlowTask {
+        String text;
+        float x, y;
+        Color color;
+        Font font;
+        float blurRadius;
+        boolean styled;
+
+        public TextGlowTask(String text, float x, float y, Color color, Font font, float blurRadius, boolean styled) {
+            this.text = text;
+            this.x = x;
+            this.y = y;
+            this.color = color;
+            this.font = font;
+            this.blurRadius = blurRadius;
+            this.styled = styled;
+        }
+    }
+
+    private static void renderGlows() {
+        if (glowTasks.isEmpty()) return;
+
+        Paint paint = new Paint();
+        
+        for (TextGlowTask task : glowTasks) {
+            paint.setColor(task.color.getRGB());
+            paint.setImageFilter(task.blurRadius > 1.5f ? BLUR_2_5PX : BLUR_1PX);
+            
+            if (task.styled) {
+                drawStyledText(getCanvas(), task.text, task.x, task.y, task.font, paint);
+            } else {
+                getCanvas().drawString(task.text, task.x, task.y, task.font, paint);
+            }
+        }
+        
+        paint.close(); // Important to close the paint
+        glowTasks.clear();
+    }
 
     private static final int[] COLOR_CODES = new int[]{
             0xFF000000, 0xFF0000AA, 0xFF00AA00, 0xFF00AAAA, 0xFFAA0000, 0xFFAA00AA, 0xFFAA5500, 0xFFAAAAAA,
@@ -99,7 +158,7 @@ public class Skia {
 
         Paint paint = getPaint(new Color(0, 0, 0, 120));
 
-        paint.setImageFilter(ImageFilter.makeBlur(2.5F, 2.5F, FilterTileMode.DECAL));
+        paint.setImageFilter(BLUR_2_5PX);
 
         save();
         clip(x, y, width, height, radius, ClipMode.DIFFERENCE);
@@ -111,7 +170,7 @@ public class Skia {
 
         Paint paint = getPaint(color);
 
-        paint.setImageFilter(ImageFilter.makeBlur(2.5F, 2.5F, FilterTileMode.DECAL));
+        paint.setImageFilter(BLUR_2_5PX);
 
         save();
         clip(x, y, width, height, radius, ClipMode.DIFFERENCE);
@@ -480,30 +539,32 @@ public class Skia {
     }
 
     public static void drawText(String text, float x, float y, Color color, Font font) {
-        Paint blurPaint = getPaint(color).makeClone();
-        blurPaint.setImageFilter(ImageFilter.makeBlur(1.0F, 1.0F, FilterTileMode.DECAL));
-
-        Paint mainPaint = getPaint(color).makeClone();
-
         Rect bounds = font.measureText(text.replaceAll("§.", ""));
         float bx = x - bounds.getLeft();
         float by = y - bounds.getTop();
 
-        drawStyledText(getCanvas(), text, bx, by, font, blurPaint);
+        // Queue blur task
+        if (PostProcess.isGlowEnabled()) {
+            glowTasks.add(new TextGlowTask(text, bx, by, color, font, 1.0F, true));
+        }
 
+        // Draw main text immediately
+        Paint mainPaint = getPaint(color);
         drawStyledText(getCanvas(), text, bx, by, font, mainPaint);
-
-        blurPaint.close();
         mainPaint.close();
     }
 
     public static void drawCenteredText(String text, float x, float y, Color color, Font font) {
-        Paint paint = getPaint(color);
-        paint.setImageFilter(ImageFilter.makeBlur(1.0F, 1.0F, FilterTileMode.DECAL));
         Rect bounds = font.measureText(text);
         float bx = x - bounds.getLeft();
         float by = y - bounds.getTop();
-        getCanvas().drawString(text, bx, by, font, paint);
+        
+        // Queue blur task (simple render mode)
+        if (PostProcess.isGlowEnabled()) {
+            glowTasks.add(new TextGlowTask(text, bx, by, color, font, 1.0F, false));
+        }
+        
+        getCanvas().drawString(text, bx, by, font, getPaint(color));
         getCanvas().drawString(text, x - bounds.getLeft() - (bounds.getWidth() / 2), y - bounds.getTop(), font,
                 getPaint(color));
     }
@@ -511,27 +572,30 @@ public class Skia {
     public static void drawHeightCenteredText(String text, float x, float y, Color color, Font font) {
 
         FontMetrics metrics = font.getMetrics();
-        Paint paint = getPaint(color);
-        paint.setImageFilter(ImageFilter.makeBlur(1.0F, 1.0F, FilterTileMode.DECAL));
         Rect bounds = font.measureText(text);
         float bx = x - bounds.getLeft();
         float by = y - bounds.getTop();
-        getCanvas().drawString(text, bx, by, font, paint);
-
+        
+        // Queue blur task (simple)
+        if (PostProcess.isGlowEnabled()) {
+            glowTasks.add(new TextGlowTask(text, bx, by, color, font, 1.0F, false));
+        }
+        
         float textCenterY = y + (metrics.getAscent() - metrics.getDescent()) / 2 - metrics.getAscent();
 
         getCanvas().drawString(text, x - bounds.getLeft(), textCenterY, font, getPaint(color));
     }
 
     public static void drawFullCenteredText(String text, float x, float y, Color color, Font font) {
-
-        Paint paint = getPaint(color);
-        paint.setImageFilter(ImageFilter.makeBlur(1.0F, 1.0F, FilterTileMode.DECAL));
         Rect bounds = font.measureText(text);
         float bx = x - bounds.getLeft();
         float by = y - bounds.getTop();
-        getCanvas().drawString(text, bx, by, font, paint);
-
+        
+        // Queue blur task (simple)
+        if (PostProcess.isGlowEnabled()) {
+            glowTasks.add(new TextGlowTask(text, bx, by, color, font, 1.0F, false));
+        }
+        
         FontMetrics metrics = font.getMetrics();
 
         float textCenterX = x - bounds.getLeft() - (bounds.getWidth() / 2);
@@ -545,12 +609,14 @@ public class Skia {
     }
 
     public static void drawTextShadow(String text, float x, float y, Color color, Font font) {
-        Paint paint = getPaint(color);
-        paint.setImageFilter(ImageFilter.makeBlur(2.5F, 2.5F, FilterTileMode.DECAL));
         Rect bounds = font.measureText(text);
         float bx = x - bounds.getLeft();
         float by = y - bounds.getTop();
-        getCanvas().drawString(text, bx, by, font, paint);
+        
+        // Only queue blur task (simple), 2.5F radius
+        if (PostProcess.isGlowEnabled()) {
+            glowTasks.add(new TextGlowTask(text, bx, by, color, font, 2.5F, false));
+        }
     }
 
     public static String getLimitText(String text, Font font, float width) {

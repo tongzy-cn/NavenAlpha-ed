@@ -1,43 +1,35 @@
 package com.heypixel.heypixelmod.obsoverlay.modules.impl.render;
 
-import com.heypixel.heypixelmod.obsoverlay.Naven;
 import com.heypixel.heypixelmod.obsoverlay.events.api.EventTarget;
-import com.heypixel.heypixelmod.obsoverlay.events.api.types.EventType;
-import com.heypixel.heypixelmod.obsoverlay.events.impl.*;
+import com.heypixel.heypixelmod.obsoverlay.events.impl.EventRenderSkia;
 import com.heypixel.heypixelmod.obsoverlay.modules.Category;
 import com.heypixel.heypixelmod.obsoverlay.modules.Module;
 import com.heypixel.heypixelmod.obsoverlay.modules.ModuleInfo;
 import com.heypixel.heypixelmod.obsoverlay.modules.impl.misc.Teams;
-import com.heypixel.heypixelmod.obsoverlay.ui.notification.Notification;
-import com.heypixel.heypixelmod.obsoverlay.ui.notification.NotificationLevel;
-import com.heypixel.heypixelmod.obsoverlay.utils.*;
+import com.heypixel.heypixelmod.obsoverlay.utils.FriendManager;
+import com.heypixel.heypixelmod.obsoverlay.utils.MathUtils;
+import com.heypixel.heypixelmod.obsoverlay.utils.ProjectionUtils;
 import com.heypixel.heypixelmod.obsoverlay.utils.auth.AuthUtils;
-import com.heypixel.heypixelmod.obsoverlay.utils.renderer.Fonts;
-import com.heypixel.heypixelmod.obsoverlay.utils.rotation.RayCastUtil;
-import com.heypixel.heypixelmod.obsoverlay.utils.rotation.RotationManager;
+import com.heypixel.heypixelmod.obsoverlay.utils.shader.impl.KawaseBlur;
+import com.heypixel.heypixelmod.obsoverlay.utils.skia.Skia;
+import com.heypixel.heypixelmod.obsoverlay.utils.skia.font.Fonts;
 import com.heypixel.heypixelmod.obsoverlay.utils.vector.Vector2f;
 import com.heypixel.heypixelmod.obsoverlay.values.ValueBuilder;
-import com.heypixel.heypixelmod.obsoverlay.values.impl.BooleanValue;
 import com.heypixel.heypixelmod.obsoverlay.values.impl.FloatValue;
-import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.core.BlockPos;
-import net.minecraft.util.Mth;
+import com.mojang.blaze3d.platform.Window;
+import io.github.humbleui.skija.*;
+import io.github.humbleui.types.RRect;
+import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.item.Items;
-import net.minecraft.world.phys.HitResult;
-import net.minecraft.world.phys.HitResult.Type;
-import net.minecraft.world.phys.Vec3;
 import org.joml.Vector4f;
 
-import java.awt.*;
+import java.awt.Color;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 @ModuleInfo(
         name = "NameTags",
@@ -46,380 +38,125 @@ import java.util.concurrent.CopyOnWriteArrayList;
         description = "Renders name tags"
 )
 public class NameTags extends Module {
-    private static final int color1 = new Color(0, 0, 0, 40).getRGB();
-    private static final int color2 = new Color(0, 0, 0, 80).getRGB();
     private final Map<Entity, Vector2f> entityPositions = new ConcurrentHashMap<>();
-    private final List<NameTags.NameTagData> sharedPositions = new CopyOnWriteArrayList<>();
-    private final Map<Player, Integer> aimTicks = new ConcurrentHashMap<>();
-    public BooleanValue mcf = ValueBuilder.create(this, "Middle Click Friend").setDefaultBooleanValue(true).build().getBooleanValue();
-    public BooleanValue showCompassPosition = ValueBuilder.create(this, "Compass Position").setDefaultBooleanValue(true).build().getBooleanValue();
-    public BooleanValue compassOnly = ValueBuilder.create(this, "Compass Only")
-            .setDefaultBooleanValue(true)
-            .setVisibility(() -> this.showCompassPosition.getCurrentValue())
-            .build()
-            .getBooleanValue();
-    public BooleanValue noPlayerOnly = ValueBuilder.create(this, "No Player Only")
-            .setDefaultBooleanValue(true)
-            .setVisibility(() -> this.showCompassPosition.getCurrentValue())
-            .build()
-            .getBooleanValue();
-    public BooleanValue shared = ValueBuilder.create(this, "Shared ESP").setDefaultBooleanValue(true).build().getBooleanValue();
+
     public FloatValue scale = ValueBuilder.create(this, "Scale")
             .setDefaultFloatValue(0.3F)
             .setFloatStep(0.01F)
             .setMinFloatValue(0.1F)
-            .setMaxFloatValue(0.5F)
+            .setMaxFloatValue(1.0F)
             .build()
             .getFloatValue();
-    List<Vector4f> blurMatrices = new ArrayList<>();
-    private BlockPos spawnPosition;
-    private Vector2f compassPosition;
-    private Player aimingPlayer;
 
-    public static boolean isAiming(Entity targetEntity, float yaw, float pitch) {
-        Vec3 playerEye = new Vec3(mc.player.getX(), mc.player.getY() + (double) mc.player.getEyeHeight(), mc.player.getZ());
-        HitResult intercept = RayCastUtil.rayCast(RotationManager.getRotation(), 150.0);
-        if (intercept == null) {
-            return false;
-        } else {
-            return intercept.getType() == Type.ENTITY && intercept.getLocation().distanceTo(playerEye) < 150.0;
-        }
-    }
+    private static final float BASE_SCALE = 10.0f;
+    private static final float DISTANCE_CLAMP_MIN = 8.0f;
+    private static final float DISTANCE_CLAMP_MAX = 16.0f;
 
-    private boolean hasPlayer() {
-        for (Entity entity : mc.level.entitiesForRendering()) {
-            if (entity != mc.player && !(entity instanceof BlinkingPlayer) && entity instanceof Player) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private BlockPos getSpawnPosition(ClientLevel p_117922_) {
-        return p_117922_.dimensionType().natural() ? p_117922_.getSharedSpawnPos() : null;
-    }
+    private static final Color BACKGROUND_COLOR = new Color(0, 0, 0, 100);
+    private static final Color HEALTH_TEXT_COLOR = new Color(200, 200, 200);
+    private static final Color HEART_ICON_COLOR = new Color(255, 85, 85);
+    
+    private final List<String> statusParts = new ArrayList<>();
 
     @EventTarget
-    public void onMotion(EventMotion e) {
-        if (e.getType() == EventType.PRE) {
-            if (!this.mcf.getCurrentValue()) {
-                this.aimingPlayer = null;
-            } else {
-                for (Player player : mc.level.players()) {
-                    if (!(player instanceof BlinkingPlayer) && player != mc.player) {
-                        if (isAiming(player, mc.player.getYRot(), mc.player.getXRot())) {
-                            if (this.aimTicks.containsKey(player)) {
-                                this.aimTicks.put(player, this.aimTicks.get(player) + 1);
-                            } else {
-                                this.aimTicks.put(player, 1);
-                            }
-
-                            if (this.aimTicks.get(player) >= 10) {
-                                this.aimingPlayer = player;
-                                break;
-                            }
-                        } else if (this.aimTicks.containsKey(player) && this.aimTicks.get(player) > 0) {
-                            this.aimTicks.put(player, this.aimTicks.get(player) - 1);
-                        } else {
-                            this.aimTicks.put(player, 0);
-                        }
-                    }
-                }
-
-                if (this.aimingPlayer != null && this.aimTicks.containsKey(this.aimingPlayer) && this.aimTicks.get(this.aimingPlayer) <= 0) {
-                    this.aimingPlayer = null;
-                }
-            }
-
-            this.spawnPosition = null;
-            if (!InventoryUtils.hasItem(Items.COMPASS) && this.compassOnly.getCurrentValue()) {
-                return;
-            }
-
-            if (this.hasPlayer() && this.noPlayerOnly.getCurrentValue()) {
-                return;
-            }
-
-            this.spawnPosition = this.getSpawnPosition(mc.level);
-        }
-    }
-
-    @EventTarget
-    public void onShader(EventShader e) {
-        for (Vector4f blurMatrix : this.blurMatrices) {
-            RenderUtils.fill(e.stack(), blurMatrix.x(), blurMatrix.y(), blurMatrix.z(), blurMatrix.w(), 1073741824);
-        }
-    }
-
-    @EventTarget
-    public void update(EventRender e) {
+    public void update(com.heypixel.heypixelmod.obsoverlay.events.impl.EventRender e) {
         try {
             this.updatePositions(e.getRenderPartialTicks());
-            this.compassPosition = null;
-            if (this.spawnPosition != null) {
-                this.compassPosition = ProjectionUtils.project(
-                        (double) this.spawnPosition.getX() + 0.5,
-                        (double) this.spawnPosition.getY() + 1.75,
-                        (double) this.spawnPosition.getZ() + 0.5,
-                        e.getRenderPartialTicks()
-                );
-            }
-        } catch (Exception var3) {
+        } catch (Exception ignored) {
         }
     }
 
     @EventTarget
-    public void onMouseKey(EventMouseClick e) {
-        if (e.key() == 2 && !e.state() && this.mcf.getCurrentValue() && this.aimingPlayer != null) {
-            if (FriendManager.isFriend(this.aimingPlayer)) {
-                Notification notification = new Notification(
-                        NotificationLevel.ERROR, "Removed " + this.aimingPlayer.getName().getString() + " from friends!", 3000L
-                );
-                Naven.getInstance().getNotificationManager().addNotification(notification);
-                FriendManager.removeFriend(this.aimingPlayer);
-            } else {
-                Notification notification = new Notification(NotificationLevel.SUCCESS, "Added " + this.aimingPlayer.getName().getString() + " as friends!", 3000L);
-                Naven.getInstance().getNotificationManager().addNotification(notification);
-                FriendManager.addFriend(this.aimingPlayer);
-            }
-        }
-    }
-
-    @EventTarget
-    public void onRender(EventRender2D e) {
-        this.blurMatrices.clear();
-        if (this.compassPosition != null) {
-            Vector2f position = this.compassPosition;
-            float scale = Math.max(
-                    80.0F
-                            - Mth.sqrt(
-                            (float) mc.player
-                                    .distanceToSqr(
-                                            (double) this.spawnPosition.getX() + 0.5, (double) this.spawnPosition.getY() + 1.75, (double) this.spawnPosition.getZ() + 0.5
-                                    )
-                    ),
-                    0.0F
-            )
-                    * this.scale.getCurrentValue()
-                    / 80.0F;
-            String text = "Compass";
-            float width = Fonts.miSans.getWidth(text, scale);
-            double height = Fonts.miSans.getHeight(true, scale);
-            this.blurMatrices
-                    .add(new Vector4f(position.x - width / 2.0F - 2.0F, position.y - 2.0F, position.x + width / 2.0F + 2.0F, (float) ((double) position.y + height)));
-            StencilUtils.write(false);
-            RenderUtils.fill(
-                    e.stack(), position.x - width / 2.0F - 2.0F, position.y - 2.0F, position.x + width / 2.0F + 2.0F, (float) ((double) position.y + height), -1
-            );
-            StencilUtils.erase(true);
-            RenderUtils.fill(
-                    e.stack(), position.x - width / 2.0F - 2.0F, position.y - 2.0F, position.x + width / 2.0F + 2.0F, (float) ((double) position.y + height), color1
-            );
-            StencilUtils.dispose();
-            Fonts.miSans.setAlpha(0.8F);
-            Fonts.miSans.render(e.stack(), text, position.x - width / 2.0F, position.y - 1.0F, Color.WHITE, true, scale);
-        }
-
+    public void onRenderSkia(EventRenderSkia e) {
         for (Entry<Entity, Vector2f> entry : this.entityPositions.entrySet()) {
             if (entry.getKey() != mc.player && entry.getKey() instanceof Player living) {
-                e.stack().pushPose();
                 float hp = living.getHealth();
                 if (hp > 20.0F) {
                     living.setHealth(20.0F);
                 }
 
                 Vector2f position = entry.getValue();
-                String text = "";
-                if (Teams.isSameTeam(living)) {
-                    text = text + "§aTeam§f | ";
+
+                double distance = mc.player.distanceTo(living);
+                float currentScale = computeScale(distance);
+
+                float padding = 6.0f * currentScale;
+                float radius = 6.0f * currentScale;
+                float spacing = 4.0f * currentScale;
+                float iconGap = 3.0f * currentScale;
+
+                statusParts.clear();
+                if (Teams.isSameTeam(living)) statusParts.add("§aTeam");
+                if (FriendManager.isFriend(living)) statusParts.add("§aFriend");
+
+                String statusText = String.join(" ", statusParts);
+                String nameText = living.getName().getString() + (AuthUtils.transport.isUser(living.getName().getString()) ? " §f(§b" + AuthUtils.transport.getName(living.getName().getString()) + "§f)" : "");
+                String healthText = String.valueOf(Math.round(hp));
+                if (living.getAbsorptionAmount() > 0.0F) {
+                    healthText += "+" + Math.round(living.getAbsorptionAmount());
                 }
 
-                if (FriendManager.isFriend(living)) {
-                    text = text + "§aFriend§f | ";
+                float baseFontSize = 14f * currentScale;
+                Font font = Fonts.getMiSans(baseFontSize);
+                Font iconFont = Fonts.getIconFill(baseFontSize);
+
+                float statusWidth = statusText.isEmpty() ? 0 : Skia.getStringWidth(statusText, font) + (padding * 2);
+                float nameWidth = Skia.getStringWidth(nameText, font) + (padding * 2);
+                float heartWidth = iconFont.measureTextWidth("\ue87d");
+                float healthWidth = Skia.getStringWidth(healthText, font) + heartWidth + (padding * 2) + iconGap;
+
+                float totalWidth = nameWidth + healthWidth + (statusWidth > 0 ? statusWidth + spacing : 0) + spacing;
+                float height = baseFontSize + (padding * 1.5f);
+
+                float startX = position.x - totalWidth / 2.0f;
+                float startY = position.y - height / 2.0f;
+
+                float currentX = startX;
+
+                if (!statusText.isEmpty()) {
+                    renderSegment(currentX, startY, statusWidth, height, radius, padding, iconGap, statusText, font, Color.WHITE, null, null);
+                    currentX += statusWidth + spacing;
                 }
 
-                if (this.aimingPlayer == living) {
-                    text = text + "§cAiming§f | ";
-                }
-                String name = living.getName().getString();
-                text = text + name + (AuthUtils.transport.isUser(name) ? " §f(§b" + AuthUtils.transport.getName(name) + "§f)" : "");
-                text = text + "§f | §c" + Math.round(hp) + (living.getAbsorptionAmount() > 0.0F ? "+" + Math.round(living.getAbsorptionAmount()) : "") + "HP";
-                float scale = this.scale.getCurrentValue();
-                float width = Fonts.miSans.getWidth(text, scale);
-                float delta = 1.0F - living.getHealth() / living.getMaxHealth();
-                double height = Fonts.miSans.getHeight(true, scale);
-                this.blurMatrices
-                        .add(new Vector4f(position.x - width / 2.0F - 2.0F, position.y - 2.0F, position.x + width / 2.0F + 2.0F, (float) ((double) position.y + height)));
-                RenderUtils.fill(
-                        e.stack(),
-                        position.x - width / 2.0F - 2.0F,
-                        position.y - 2.0F,
-                        position.x + width / 2.0F + 2.0F,
-                        (float) ((double) position.y + height),
-                        color1
-                );
-                RenderUtils.fill(
-                        e.stack(),
-                        position.x - width / 2.0F - 2.0F,
-                        position.y - 2.0F,
-                        position.x + width / 2.0F + 2.0F - (width + 4.0F) * delta,
-                        (float) ((double) position.y + height),
-                        color2
-                );
-                Fonts.miSans.setAlpha(0.8F);
-                Fonts.miSans.render(e.stack(), text, position.x - width / 2.0F, position.y - 1.0F, Color.WHITE, true, scale);
-                Fonts.miSans.setAlpha(1.0F);
-                e.stack().popPose();
+                renderSegment(currentX, startY, nameWidth, height, radius, padding, iconGap, nameText, font, Color.WHITE, null, null);
+                currentX += nameWidth + spacing;
+
+                renderSegment(currentX, startY, healthWidth, height, radius, padding, iconGap, healthText, font, HEALTH_TEXT_COLOR, "\ue87d", iconFont);
             }
         }
+    }
 
-        if (this.shared.getCurrentValue()) {
-            for (NameTags.NameTagData data : this.sharedPositions) {
-                e.stack().pushPose();
-                Vector2f positionx = data.render();
-                String textx = "§aShared§f | " + data.displayName();
-                float scale = this.scale.getCurrentValue();
-                float width = Fonts.miSans.getWidth(textx, scale);
-                double delta = 1.0 - data.health() / data.maxHealth();
-                double height = Fonts.miSans.getHeight(true, scale);
-                this.blurMatrices
-                        .add(
-                                new Vector4f(positionx.x - width / 2.0F - 2.0F, positionx.y - 2.0F, positionx.x + width / 2.0F + 2.0F, (float) ((double) positionx.y + height))
-                        );
-                RenderUtils.fill(
-                        e.stack(),
-                        positionx.x - width / 2.0F - 2.0F,
-                        positionx.y - 2.0F,
-                        positionx.x + width / 2.0F + 2.0F,
-                        (float) ((double) positionx.y + height),
-                        color1
-                );
-                RenderUtils.fill(
-                        e.stack(),
-                        positionx.x - width / 2.0F - 2.0F,
-                        positionx.y - 2.0F,
-                        (float) ((double) (positionx.x + width / 2.0F + 2.0F) - (double) (width + 4.0F) * delta),
-                        (float) ((double) positionx.y + height),
-                        color2
-                );
-                Fonts.miSans.setAlpha(0.8F);
-                Fonts.miSans.render(e.stack(), textx, positionx.x - width / 2.0F, positionx.y - 1.0F, Color.WHITE, true, scale);
-                Fonts.miSans.setAlpha(1.0F);
-                e.stack().popPose();
-            }
+    private float computeScale(double distance) {
+        double clampedDistance = Math.max(DISTANCE_CLAMP_MIN, Math.min(distance, DISTANCE_CLAMP_MAX));
+        return (float) ((BASE_SCALE * this.scale.getCurrentValue()) / clampedDistance);
+    }
+
+    private void renderSegment(float x, float y, float width, float height, float radius, float padding, float iconGap, String text, Font font, Color textColor, String icon, Font iconFont) {
+        Skia.drawRoundedRect(x, y, width, height, radius, BACKGROUND_COLOR);
+
+        float textY = y + (height / 2.0f) - (font.getMetrics().getCapHeight() / 2.0f);
+        float contentX = x + padding;
+
+        Skia.drawText(text, contentX, textY, textColor, font);
+
+        if (icon != null && iconFont != null) {
+            float textWidth = Skia.getStringWidth(text, font);
+            Skia.drawText(icon, contentX + textWidth + iconGap, textY, HEART_ICON_COLOR, iconFont);
         }
     }
 
     private void updatePositions(float renderPartialTicks) {
         this.entityPositions.clear();
-        this.sharedPositions.clear();
 
         for (Entity entity : mc.level.entitiesForRendering()) {
             if (entity instanceof Player && !entity.getName().getString().startsWith("CIT-")) {
-                double x = MathUtils.interpolate(renderPartialTicks, entity.xo, entity.getX());
-                double y = MathUtils.interpolate(renderPartialTicks, entity.yo, entity.getY()) + (double) entity.getBbHeight() + 0.5;
-                double z = MathUtils.interpolate(renderPartialTicks, entity.zo, entity.getZ());
+                double x = MathUtils.interpolate(entity.xo, entity.getX(), renderPartialTicks);
+                double y = MathUtils.interpolate(entity.yo, entity.getY(), renderPartialTicks) + (double) entity.getBbHeight() + 0.5;
+                double z = MathUtils.interpolate(entity.zo, entity.getZ(), renderPartialTicks);
                 Vector2f vector = ProjectionUtils.project(x, y, z, renderPartialTicks);
                 vector.setY(vector.getY() - 2.0F);
                 this.entityPositions.put(entity, vector);
             }
-        }
-
-        if (this.shared.getCurrentValue()) {
-            Map<String, SharedESPData> dataMap = EntityWatcher.getSharedESPData();
-
-            for (SharedESPData value : dataMap.values()) {
-                double x = value.getPosX();
-                double y = value.getPosY() + (double) mc.player.getBbHeight() + 0.5;
-                double z = value.getPosZ();
-                Vector2f vector = ProjectionUtils.project(x, y, z, renderPartialTicks);
-                vector.setY(vector.getY() - 2.0F);
-                String displayName = value.getDisplayName();
-                displayName = displayName
-                        + "§f | §c"
-                        + Math.round(value.getHealth())
-                        + (value.getAbsorption() > 0.0 ? "+" + Math.round(value.getAbsorption()) : "")
-                        + "HP";
-                this.sharedPositions
-                        .add(new NameTags.NameTagData(displayName, value.getHealth(), value.getMaxHealth(), value.getAbsorption(), new Vec3(x, y, z), vector));
-            }
-        }
-    }
-
-    private record NameTagData(String displayName, double health, double maxHealth, double absorption, Vec3 position,
-                               Vector2f render) {
-
-        @Override
-        public boolean equals(Object o) {
-            if (o == this) {
-                return true;
-            } else if (!(o instanceof NameTagData other)) {
-                return false;
-            } else if (!other.canEqual(this)) {
-                return false;
-            } else if (Double.compare(this.health(), other.health()) != 0) {
-                return false;
-            } else if (Double.compare(this.maxHealth(), other.maxHealth()) != 0) {
-                return false;
-            } else if (Double.compare(this.absorption(), other.absorption()) != 0) {
-                return false;
-            } else {
-                Object this$displayName = this.displayName();
-                Object other$displayName = other.displayName();
-                if (Objects.equals(this$displayName, other$displayName)) {
-                    Object this$position = this.position();
-                    Object other$position = other.position();
-                    if (Objects.equals(this$position, other$position)) {
-                        Object this$render = this.render();
-                        Object other$render = other.render();
-                        return Objects.equals(this$render, other$render);
-                    } else {
-                        return false;
-                    }
-                } else {
-                    return false;
-                }
-            }
-        }
-
-        private boolean canEqual(Object other) {
-            return other instanceof NameTagData;
-        }
-
-        @Override
-        public int hashCode() {
-            int PRIME = 59;
-            int result = 1;
-            long $health = Double.doubleToLongBits(this.health());
-            result = result * 59 + (int) ($health >>> 32 ^ $health);
-            long $maxHealth = Double.doubleToLongBits(this.maxHealth());
-            result = result * 59 + (int) ($maxHealth >>> 32 ^ $maxHealth);
-            long $absorption = Double.doubleToLongBits(this.absorption());
-            result = result * 59 + (int) ($absorption >>> 32 ^ $absorption);
-            Object $displayName = this.displayName();
-            result = result * 59 + ($displayName == null ? 43 : $displayName.hashCode());
-            Object $position = this.position();
-            result = result * 59 + ($position == null ? 43 : $position.hashCode());
-            Object $render = this.render();
-            return result * 59 + ($render == null ? 43 : $render.hashCode());
-        }
-
-        @Override
-        public String toString() {
-            return "NameTags.NameTagData(displayName="
-                    + this.displayName()
-                    + ", health="
-                    + this.health()
-                    + ", maxHealth="
-                    + this.maxHealth()
-                    + ", absorption="
-                    + this.absorption()
-                    + ", position="
-                    + this.position()
-                    + ", render="
-                    + this.render()
-                    + ")";
         }
     }
 }
