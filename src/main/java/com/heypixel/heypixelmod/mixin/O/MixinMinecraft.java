@@ -1,6 +1,7 @@
 package com.heypixel.heypixelmod.mixin.O;
 
 import com.heypixel.heypixelmod.obsoverlay.Naven;
+import com.heypixel.heypixelmod.obsoverlay.Version;
 import com.heypixel.heypixelmod.obsoverlay.events.api.types.EventType;
 import com.heypixel.heypixelmod.obsoverlay.events.impl.EventClick;
 import com.heypixel.heypixelmod.obsoverlay.events.impl.EventRunTicks;
@@ -161,5 +162,10 @@ public class MixinMinecraft {
         SkiaContext.createSurface(window.getWidth(), window.getHeight());
         KawaseBlur.GUI_BLUR.resize();
         KawaseBlur.INGAME_BLUR.resize();
+    }
+
+    @Inject(method = "createTitle", at = @At("HEAD"), cancellable = true)
+    private void hookCreateTitle(CallbackInfoReturnable<String> cir) {
+        cir.setReturnValue("Naven Alpha " + Version.getVersion());
     }
 }

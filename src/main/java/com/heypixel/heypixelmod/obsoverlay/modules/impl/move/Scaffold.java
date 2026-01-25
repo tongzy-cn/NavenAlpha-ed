@@ -322,6 +322,28 @@ public class Scaffold extends Module {
         return false;
     }
 
+    @EventTarget
+    public void onRender(com.heypixel.heypixelmod.obsoverlay.events.impl.EventRender e) {
+        if (blockPos != null) {
+            com.mojang.blaze3d.vertex.PoseStack stack = e.getPMatrixStack();
+            stack.pushPose();
+            com.mojang.blaze3d.systems.RenderSystem.disableDepthTest();
+            com.mojang.blaze3d.systems.RenderSystem.enableBlend();
+            com.mojang.blaze3d.systems.RenderSystem.defaultBlendFunc();
+            com.mojang.blaze3d.systems.RenderSystem.setShader(net.minecraft.client.renderer.GameRenderer::getPositionShader);
+            com.mojang.blaze3d.vertex.Tesselator tessellator = com.mojang.blaze3d.systems.RenderSystem.renderThreadTesselator();
+            com.mojang.blaze3d.vertex.BufferBuilder bufferBuilder = tessellator.getBuilder();
+            com.mojang.blaze3d.systems.RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 0.4F);
+
+            com.heypixel.heypixelmod.obsoverlay.utils.RenderUtils.装女人(bufferBuilder, stack.last().pose(), com.heypixel.heypixelmod.obsoverlay.utils.BlockUtils.getBoundingBox(blockPos));
+
+            com.mojang.blaze3d.systems.RenderSystem.disableBlend();
+            com.mojang.blaze3d.systems.RenderSystem.enableDepthTest();
+            com.mojang.blaze3d.systems.RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
+            stack.popPose();
+        }
+    }
+
     public BlockPos getIntBlockPos(double x, double y, double z) {
         return new BlockPos((int) Math.floor(x), (int) Math.floor(y), (int) Math.floor(z));
     }

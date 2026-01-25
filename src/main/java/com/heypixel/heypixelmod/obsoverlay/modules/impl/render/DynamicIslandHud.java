@@ -33,6 +33,7 @@ import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
+import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.sounds.SoundEvents;
@@ -45,6 +46,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArraySet;
@@ -214,11 +216,23 @@ public class DynamicIslandHud extends Module {
                 attackedPlayers.remove(entry);
             }
         } else if (e.getPacket() instanceof ClientboundSetTitleTextPacket packet) {
-            String text = packet.getText().getString();
-            if (text.contains("胜利")) {
+            if (isWinText(packet.getText().getString())) {
+                onWin();
+            }
+        } else if (e.getPacket() instanceof ClientboundSetSubtitleTextPacket packet) {
+            if (isWinText(packet.getText().getString())) {
                 onWin();
             }
         }
+    }
+
+    private static boolean isWinText(String text) {
+        if (text == null || text.isEmpty()) return false;
+        String lower = text.toLowerCase(Locale.ROOT);
+        return lower.contains("胜利")
+                || lower.contains("获胜")
+                || lower.contains("victory")
+                || lower.contains("you win");
     }
 
     @EventTarget
@@ -523,7 +537,15 @@ public class DynamicIslandHud extends Module {
         drawBackground(Size.INVENTORY_BG_COLOR);
         float alpha = 1f - getMergeProgress();
         drawSideInfo(1f);
-        drawCenteredTitle(alpha);
+        if (currentToggle != null && currentToggle.type == ToggleType.SCAFFOLD) {
+            drawScaffoldInfo(alpha);
+        } else if (currentToggle != null) {
+            drawToggleInfo(currentToggle, (int) (255 * alpha), 0f);
+        } else if (isScaffoldActive()) {
+            drawScaffoldInfo(alpha);
+        } else {
+            drawCenteredTitle(alpha);
+        }
     }
 
     private void renderTabDisplay() {
@@ -535,7 +557,15 @@ public class DynamicIslandHud extends Module {
         drawBackground(Size.INVENTORY_BG_COLOR);
         float alpha = 1f - getMergeProgress();
         drawSideInfo(1f);
-        drawCenteredTitle(alpha);
+        if (currentToggle != null && currentToggle.type == ToggleType.SCAFFOLD) {
+            drawScaffoldInfo(alpha);
+        } else if (currentToggle != null) {
+            drawToggleInfo(currentToggle, (int) (255 * alpha), 1f);
+        } else if (isScaffoldActive()) {
+            drawScaffoldInfo(alpha);
+        } else {
+            drawCenteredTitle(alpha);
+        }
     }
 
     private void drawBackground(Color color) {
@@ -892,28 +922,7 @@ public class DynamicIslandHud extends Module {
     }
 
     private void drawWinInfo(ToggleInfo toggle, int alpha) {
-        float padding = 6f;
-        float iconSize = 9f;
-        float spacing = 5f;
-
-        Font textFont = Fonts.getMiSans(iconSize);
-        float centerY = animY + animH / 2f;
-        float iconX = animX + padding + iconSize / 2f;
-        float iconY = centerY;
-        Color glowColor = withAlpha(new Color(255, 215, 0), alpha); // Gold color
-        int skColor = io.github.humbleui.skija.Color.makeARGB(glowColor.getAlpha(), glowColor.getRed(), glowColor.getGreen(), glowColor.getBlue());
-        try (Paint paint = new Paint().setColor(skColor);
-             Paint blurPaint = paint.makeClone().setImageFilter(ImageFilter.makeBlur(1.6F, 1.6F, FilterTileMode.DECAL))) {
-            Skia.getCanvas().drawCircle(iconX, iconY, iconSize / 2f, blurPaint);
-            Skia.getCanvas().drawCircle(iconX, iconY, iconSize / 2f, paint);
-        }
-
-        float textStartX = animX + padding + iconSize + spacing;
-        float textAreaW = animX + animW - padding - textStartX;
-        float textW = Skia.getStringWidth(toggle.name, textFont);
-        float textX = textStartX + Math.max(0f, (textAreaW - textW) / 2f);
-        float textY = getTextBaseline(centerY, textFont) - 1.0f;
-        Skia.drawText(toggle.name, textX, textY, withAlpha(Color.WHITE, alpha), textFont);
+        drawKillInfo(toggle, alpha);
     }
 
     private void drawStatusIcon(float x, float y, float size, boolean enabled, int alpha) {

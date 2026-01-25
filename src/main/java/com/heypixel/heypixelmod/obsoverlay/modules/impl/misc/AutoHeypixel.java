@@ -60,7 +60,7 @@ public class AutoHeypixel extends Module {
                         mc.execute(() -> {
                             if (mc.player != null && mc.level != null) {
                                 int originalSlot = mc.player.getInventory().selected;
-                                int targetSlot = 3; // 4th slot (0-indexed)
+                                int targetSlot = 4; // 5th slot (0-indexed)
                                 
                                 mc.player.getInventory().selected = targetSlot;
                                 KeyMapping.click(mc.options.keyUse.getKey());
