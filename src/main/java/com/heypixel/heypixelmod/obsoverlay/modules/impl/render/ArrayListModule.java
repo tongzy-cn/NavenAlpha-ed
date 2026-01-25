@@ -65,6 +65,7 @@ public class ArrayListModule extends Module {
             .build()
             .getFloatValue();
     List<Module> renderModules;
+    private boolean lastTopHalf = true;
     private final Map<Module, SmoothAnimationTimer> xTimers = new HashMap<>();
     private final Map<Module, SmoothAnimationTimer> yTimers = new HashMap<>();
 
@@ -75,7 +76,9 @@ public class ArrayListModule extends Module {
         Font miSans = Fonts.getMiSans(arrayListSize.getCurrentValue());
         Font icon = Fonts.getNavenIcon(arrayListSize.getCurrentValue());
         ModuleManager moduleManager = Naven.getInstance().getModuleManager();
-        if (Module.update || this.renderModules == null || this.renderModules.isEmpty()) {
+        boolean topHalf = dragValue.getY() < mc.getWindow().getGuiScaledHeight() / 2.0f;
+        if (Module.update || this.renderModules == null || this.renderModules.isEmpty() || topHalf != this.lastTopHalf) {
+            this.lastTopHalf = topHalf;
             this.renderModules = new java.util.ArrayList<>(moduleManager.getModules());
             if (this.hideRenderModules.getCurrentValue()) {
                 this.renderModules.removeIf(modulex -> modulex.getCategory() == Category.RENDER);
@@ -84,7 +87,7 @@ public class ArrayListModule extends Module {
             this.renderModules.sort((o1, o2) -> {
                 float o1Width = Skia.getStringWidth(getModuleDisplayName(o1), miSans);
                 float o2Width = Skia.getStringWidth(getModuleDisplayName(o2), miSans);
-                return Float.compare(o2Width, o1Width);
+                return topHalf ? Float.compare(o2Width, o1Width) : Float.compare(o1Width, o2Width);
             });
 
             update = false;

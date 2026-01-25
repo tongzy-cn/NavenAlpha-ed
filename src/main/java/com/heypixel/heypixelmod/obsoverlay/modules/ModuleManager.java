@@ -118,6 +118,7 @@ public class ModuleManager {
                 new TargetHUD(),
                 new NotificationModule(),
                 new AutoHeypixel(),
+                new KeyBindsHUD(),
                 new ArrayListModule(),
 //                new Speed(),
                 new GrimLowHop(),

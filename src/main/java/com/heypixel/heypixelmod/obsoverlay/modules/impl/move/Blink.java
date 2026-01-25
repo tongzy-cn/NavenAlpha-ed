@@ -116,7 +116,7 @@ public class Blink extends Module {
     private int shouldReleaseTicks = 0;
     private int releasedTicks = 0;
 
-    private long getBlinkTicks() {
+    public long getBlinkTicks() {
         return this.packets.stream().filter(packet -> packet instanceof ServerboundMovePlayerPacket).count();
     }
 
@@ -170,11 +170,7 @@ public class Blink extends Module {
 
     @EventTarget
     public void onRender(EventRender2D e) {
-        int x = mc.getWindow().getGuiScaledWidth() / 2 - 50;
-        int y = mc.getWindow().getGuiScaledHeight() / 2 + 15;
-        this.progress.update(true);
-        RenderUtils.drawRoundedRect(e.stack(), (float) x, (float) y, 100.0F, 5.0F, 2.0F, Integer.MIN_VALUE);
-        RenderUtils.drawRoundedRect(e.stack(), (float) x, (float) y, this.progress.value, 5.0F, 2.0F, mainColor);
+        // Render handled by DynamicIslandHud
     }
 
     private boolean isPlayerNear(double distance) {

@@ -576,33 +576,29 @@ public class Skia {
 
         FontMetrics metrics = font.getMetrics();
         Rect bounds = font.measureText(text);
-        float bx = x - bounds.getLeft();
-        float by = y - bounds.getTop();
-        
-        // Queue blur task (simple)
-        if (PostProcess.isGlowEnabled()) {
-            glowTasks.add(new TextGlowTask(text, bx, by, color, font, 1.0F, false));
-        }
         
         float textCenterY = y + (metrics.getAscent() - metrics.getDescent()) / 2 - metrics.getAscent();
+        float drawX = x - bounds.getLeft();
 
-        getCanvas().drawString(text, x - bounds.getLeft(), textCenterY, font, getPaint(color));
+        // Queue blur task (simple)
+        if (PostProcess.isGlowEnabled()) {
+            glowTasks.add(new TextGlowTask(text, drawX, textCenterY, color, font, 1.0F, false));
+        }
+
+        getCanvas().drawString(text, drawX, textCenterY, font, getPaint(color));
     }
 
     public static void drawFullCenteredText(String text, float x, float y, Color color, Font font) {
         Rect bounds = font.measureText(text);
-        float bx = x - bounds.getLeft();
-        float by = y - bounds.getTop();
-        
-        // Queue blur task (simple)
-        if (PostProcess.isGlowEnabled()) {
-            glowTasks.add(new TextGlowTask(text, bx, by, color, font, 1.0F, false));
-        }
-        
         FontMetrics metrics = font.getMetrics();
 
         float textCenterX = x - bounds.getLeft() - (bounds.getWidth() / 2);
         float textCenterY = y + (metrics.getAscent() - metrics.getDescent()) / 2 - metrics.getAscent();
+        
+        // Queue blur task (simple)
+        if (PostProcess.isGlowEnabled()) {
+            glowTasks.add(new TextGlowTask(text, textCenterX, textCenterY, color, font, 1.0F, false));
+        }
 
         getCanvas().drawString(text, textCenterX, textCenterY, font, getPaint(color));
     }

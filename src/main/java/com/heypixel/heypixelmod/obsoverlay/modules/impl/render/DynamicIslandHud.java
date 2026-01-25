@@ -11,8 +11,10 @@ import com.heypixel.heypixelmod.obsoverlay.modules.Category;
 import com.heypixel.heypixelmod.obsoverlay.modules.Module;
 import com.heypixel.heypixelmod.obsoverlay.modules.ModuleInfo;
 import com.heypixel.heypixelmod.obsoverlay.modules.impl.misc.InventoryCleaner;
+import com.heypixel.heypixelmod.obsoverlay.modules.impl.move.Blink;
 import com.heypixel.heypixelmod.obsoverlay.modules.impl.move.Scaffold;
 import com.heypixel.heypixelmod.obsoverlay.utils.InventoryUtils;
+import com.heypixel.heypixelmod.obsoverlay.utils.SmoothAnimationTimer;
 import com.heypixel.heypixelmod.obsoverlay.utils.skia.Skia;
 import com.heypixel.heypixelmod.obsoverlay.utils.skia.font.Fonts;
 import com.heypixel.heypixelmod.obsoverlay.utils.skia.font.Icon;
@@ -47,8 +49,10 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Queue;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.stream.Collectors;
 
@@ -126,9 +130,7 @@ public class DynamicIslandHud extends Module {
             .getFloatValue();
 
     private static ToggleInfo currentToggle;
-    private static ToggleInfo pendingToggle;
-    private static ToggleInfo pendingKill;
-    private static ToggleInfo pendingWin;
+    private static final Queue<ToggleInfo> pendingQueue = new ConcurrentLinkedQueue<>();
     private static final Set<UUID> attackedPlayers = new CopyOnWriteArraySet<>();
     private long toggleStartTime = -1L;
     private long tabStartTime = -1L;
@@ -142,6 +144,10 @@ public class DynamicIslandHud extends Module {
     private float animW;
     private float animH;
     private float tabMergeProgress;
+    private float tabStartW = Size.BASE_W;
+    private float expandStartW = Size.BASE_W;
+    private float expandStartH = Size.BASE_H;
+    private final SmoothAnimationTimer blinkProgressTimer = new SmoothAnimationTimer(0.0F, 0.0F, 0.12F);
 
     private List<PlayerInfo> playerList;
     private float tabTargetW;
@@ -149,19 +155,13 @@ public class DynamicIslandHud extends Module {
 
     public static void onModuleToggle(Module module, boolean enabled) {
         if (module instanceof DynamicIslandHud) return;
+        ToggleType type = ToggleType.MODULE;
         if (module instanceof Scaffold) {
-            if (currentToggle != null && currentToggle.type == ToggleType.SCAFFOLD && currentToggle.enabled == enabled) {
-                pendingToggle = new ToggleInfo(module.getName(), enabled, ToggleType.SCAFFOLD);
-                return;
-            }
-            pendingToggle = new ToggleInfo(module.getName(), enabled, ToggleType.SCAFFOLD);
-            return;
+            type = ToggleType.SCAFFOLD;
+        } else if (module instanceof Blink) {
+            type = ToggleType.BLINK;
         }
-        if (currentToggle != null && currentToggle.type == ToggleType.MODULE && currentToggle.name.equals(module.getName()) && currentToggle.enabled == enabled) {
-            pendingToggle = new ToggleInfo(module.getName(), enabled, ToggleType.MODULE);
-            return;
-        }
-        pendingToggle = new ToggleInfo(module.getName(), enabled, ToggleType.MODULE);
+        pendingQueue.offer(new ToggleInfo(module.getName(), enabled, type));
     }
 
     public static void onPlayerAttack(Player player) {
@@ -171,11 +171,11 @@ public class DynamicIslandHud extends Module {
 
     private static void onKill(String playerName) {
         if (playerName == null || playerName.isEmpty()) return;
-        pendingKill = new ToggleInfo("You killed " + playerName + " !", true, ToggleType.KILL);
+        pendingQueue.offer(new ToggleInfo("You killed " + playerName + " !", true, ToggleType.KILL));
     }
 
     private static void onWin() {
-        pendingWin = new ToggleInfo("Victory!", true, ToggleType.WIN);
+        pendingQueue.offer(new ToggleInfo("Victory!", true, ToggleType.WIN));
     }
 
     @EventTarget
@@ -238,14 +238,35 @@ public class DynamicIslandHud extends Module {
     @EventTarget
     public void onRespawn(EventRespawn e) {
         attackedPlayers.clear();
-        pendingKill = null;
-        pendingWin = null;
+        pendingQueue.clear();
     }
 
     private void update() {
         handleTabInput();
         processToggle();
         calculateState();
+        updateBlinkAnimation();
+    }
+
+    private void updateBlinkAnimation() {
+        if (Naven.getInstance() == null || Naven.getInstance().getModuleManager() == null) {
+            blinkProgressTimer.target = 0f;
+            blinkProgressTimer.value = 0f;
+            return;
+        }
+
+        Module module = Naven.getInstance().getModuleManager().getModule(Blink.class);
+        if (module != null && module.isEnabled()) {
+            Blink blink = (Blink) module;
+            float max = blink.maxTicks.getCurrentValue();
+            float current = blink.getBlinkTicks();
+            float target = clamp(current / max);
+            blinkProgressTimer.target = target;
+            blinkProgressTimer.update(true);
+        } else {
+            blinkProgressTimer.target = 0f;
+            blinkProgressTimer.value = 0f;
+        }
     }
 
     private void handleTabInput() {
@@ -254,6 +275,7 @@ public class DynamicIslandHud extends Module {
         if (tabPressed && !isTabPhase()) {
             tabStartTime = System.currentTimeMillis();
             phase = Phase.TAB_EXPAND;
+            tabStartW = animW;
             updatePlayerList();
         } else if (tabPressed && isTabPhase()) {
             updatePlayerList();
@@ -302,15 +324,8 @@ public class DynamicIslandHud extends Module {
     private void processToggle() {
         if (isTabPhase()) return;
 
-        if (pendingToggle != null) {
-            applyPending(pendingToggle);
-            pendingToggle = null;
-        } else if (pendingKill != null) {
-            applyPending(pendingKill);
-            pendingKill = null;
-        } else if (pendingWin != null) {
-            applyPending(pendingWin);
-            pendingWin = null;
+        if (!pendingQueue.isEmpty()) {
+            applyPending(pendingQueue.poll());
         } else if (currentToggle != null && elapsedToggle() >= Timing.TOTAL) {
             currentToggle = null;
             toggleStartTime = -1L;
@@ -319,32 +334,15 @@ public class DynamicIslandHud extends Module {
 
     private void applyPending(ToggleInfo next) {
         float newTargetW = calculateExpandedWidth(next);
-        if (next.type == ToggleType.SCAFFOLD && !next.enabled) {
-            currentToggle = next;
-            targetExpandedWidth = newTargetW;
-            toggleStartTime = System.currentTimeMillis() - (Timing.EXPAND + Timing.DISPLAY);
-            return;
-        }
+        this.expandStartW = this.animW;
+        this.expandStartH = this.animH;
+        this.currentToggle = next;
+        this.targetExpandedWidth = newTargetW;
 
-        if (phase == Phase.EXPANDING || phase == Phase.DISPLAY) {
-            if (phase == Phase.DISPLAY) {
-                toggleStartTime = System.currentTimeMillis() - Timing.EXPAND;
-            }
-            currentToggle = next;
-            targetExpandedWidth = newTargetW;
-        } else if (phase == Phase.COLLAPSE_1 || phase == Phase.COLLAPSE_2) {
-            float currentW = animW;
-            float baseW = Size.BASE_W;
-            float p = clamp((currentW - baseW) / (newTargetW - baseW));
-            float t = 1f - (float) Math.cbrt(1f - p);
-            toggleStartTime = System.currentTimeMillis() - (long)(t * Timing.EXPAND);
-
-            currentToggle = next;
-            targetExpandedWidth = newTargetW;
+        if ((next.type == ToggleType.SCAFFOLD || next.type == ToggleType.BLINK) && !next.enabled) {
+            this.toggleStartTime = System.currentTimeMillis() - (Timing.EXPAND + Timing.DISPLAY);
         } else {
-            currentToggle = next;
-            toggleStartTime = System.currentTimeMillis();
-            targetExpandedWidth = newTargetW;
+            this.toggleStartTime = System.currentTimeMillis();
         }
     }
 
@@ -352,7 +350,7 @@ public class DynamicIslandHud extends Module {
         long dt = elapsedToggle();
         long tabDt = elapsedTab();
         float targetAnimW = animW; // Default to keeping current
-        float baseH = isScaffoldActive() ? Size.EXPANDED_H : Size.BASE_H;
+        float baseH = (isScaffoldActive() || isBlinkActive()) ? Size.EXPANDED_H : Size.BASE_H;
 
         if (phase == Phase.TAB_EXPAND) {
             if (tabDt < Timing.TAB_TRANSITION) {
@@ -361,7 +359,7 @@ public class DynamicIslandHud extends Module {
                 float expandP = easeInOut(t);
                 tabMergeProgress = mergeP;
                 setPhase(Phase.TAB_EXPAND, expandP,
-                        lerp(mergeP, Size.BASE_W, tabTargetW),
+                        lerp(mergeP, tabStartW, tabTargetW),
                         lerp(expandP, baseH, tabTargetH),
                         1f);
                 targetAnimW = animW; // Tab phase handles interpolation internally
@@ -377,26 +375,23 @@ public class DynamicIslandHud extends Module {
                 float expandP = easeInOut(1f - t);
                 tabMergeProgress = mergeP;
                 setPhase(Phase.TAB_COLLAPSE, expandP,
-                        lerp(mergeP, Size.BASE_W, tabTargetW),
+                        lerp(mergeP, tabStartW, tabTargetW),
                         lerp(expandP, baseH, tabTargetH),
                         1f);
                 targetAnimW = animW;
             } else {
                 tabMergeProgress = 0f;
-                setPhase(Phase.IDLE, 0f, Size.BASE_W, baseH, 1f);
+                setPhase(Phase.IDLE, 0f, tabStartW, baseH, 1f);
                 tabStartTime = -1L;
-                targetAnimW = Size.BASE_W;
+                targetAnimW = tabStartW;
             }
         } else if (phase == Phase.TAB_DISPLAY) {
             tabMergeProgress = 1f;
             setPhase(Phase.TAB_DISPLAY, 1f, tabTargetW, tabTargetH, 1f);
             targetAnimW = tabTargetW;
         } else {
-            float idleW = isScaffoldActive() ? calculateScaffoldWidth() : Size.BASE_W;
-            float expandStartW = idleW;
-            if (currentToggle != null && currentToggle.type == ToggleType.SCAFFOLD) {
-                expandStartW = Size.BASE_W;
-            }
+            float idleW = isBlinkActive() ? calculateBlinkWidth() : (isScaffoldActive() ? calculateScaffoldWidth() : Size.BASE_W);
+            
             if (currentToggle == null && toggleStartTime == -1L) {
                 setPhase(Phase.IDLE, 0f, idleW, baseH, 1f);
                 targetAnimW = idleW;
@@ -404,7 +399,7 @@ public class DynamicIslandHud extends Module {
                 float p = easeOut(dt / (float) Timing.EXPAND);
                 setPhase(Phase.EXPANDING, p,
                         lerp(p, expandStartW, targetExpandedWidth),
-                        lerp(p, baseH, Size.EXPANDED_H),
+                        lerp(p, expandStartH, Size.EXPANDED_H),
                         1f);
                 targetAnimW = lerp(p, expandStartW, targetExpandedWidth);
             } else if (dt < Timing.EXPAND + Timing.DISPLAY) {
@@ -482,7 +477,9 @@ public class DynamicIslandHud extends Module {
     private void renderIdle() {
         drawBackground(Size.INVENTORY_BG_COLOR);
         drawSideInfo(1f);
-        if (isScaffoldActive()) {
+        if (isBlinkActive()) {
+            drawBlinkInfo(1f);
+        } else if (isScaffoldActive()) {
             drawScaffoldInfo(1f);
         } else {
             drawCenteredTitle(1f);
@@ -494,8 +491,12 @@ public class DynamicIslandHud extends Module {
         drawSideInfo(1f);
         if (currentToggle != null && currentToggle.type == ToggleType.SCAFFOLD) {
             drawScaffoldInfo(progress);
+        } else if (currentToggle != null && currentToggle.type == ToggleType.BLINK) {
+            drawBlinkInfo(progress);
         } else if (currentToggle != null) {
             drawToggleInfo(currentToggle, alphaFromProgress(progress), 0f);
+        } else if (isBlinkActive()) {
+            drawBlinkInfo(1f);
         } else if (isScaffoldActive()) {
             drawScaffoldInfo(1f);
         }
@@ -506,8 +507,12 @@ public class DynamicIslandHud extends Module {
         drawSideInfo(1f);
         if (currentToggle != null && currentToggle.type == ToggleType.SCAFFOLD) {
             drawScaffoldInfo(1f);
+        } else if (currentToggle != null && currentToggle.type == ToggleType.BLINK) {
+            drawBlinkInfo(1f);
         } else if (currentToggle != null) {
             drawToggleInfo(currentToggle, 255, progress);
+        } else if (isBlinkActive()) {
+            drawBlinkInfo(1f);
         } else if (isScaffoldActive()) {
             drawScaffoldInfo(1f);
         }
@@ -518,6 +523,8 @@ public class DynamicIslandHud extends Module {
         drawSideInfo(1f);
         if (currentToggle != null && currentToggle.type == ToggleType.SCAFFOLD) {
             drawScaffoldInfo(1f);
+        } else if (currentToggle != null && currentToggle.type == ToggleType.BLINK) {
+            drawBlinkInfo(1f);
         } else if (currentToggle != null) {
             drawToggleInfo(currentToggle, alphaFromProgress(1f - progress), 1f);
         }
@@ -526,7 +533,9 @@ public class DynamicIslandHud extends Module {
     private void renderCollapse2() {
         drawBackground(Size.INVENTORY_BG_COLOR);
         drawSideInfo(1f);
-        if (isScaffoldActive()) {
+        if (isBlinkActive()) {
+            drawBlinkInfo(1f);
+        } else if (isScaffoldActive()) {
             drawScaffoldInfo(1f);
         } else {
             drawCenteredTitle(progress);
@@ -539,8 +548,12 @@ public class DynamicIslandHud extends Module {
         drawSideInfo(1f);
         if (currentToggle != null && currentToggle.type == ToggleType.SCAFFOLD) {
             drawScaffoldInfo(alpha);
+        } else if (currentToggle != null && currentToggle.type == ToggleType.BLINK) {
+            drawBlinkInfo(alpha);
         } else if (currentToggle != null) {
             drawToggleInfo(currentToggle, (int) (255 * alpha), 0f);
+        } else if (isBlinkActive()) {
+            drawBlinkInfo(alpha);
         } else if (isScaffoldActive()) {
             drawScaffoldInfo(alpha);
         } else {
@@ -559,8 +572,12 @@ public class DynamicIslandHud extends Module {
         drawSideInfo(1f);
         if (currentToggle != null && currentToggle.type == ToggleType.SCAFFOLD) {
             drawScaffoldInfo(alpha);
+        } else if (currentToggle != null && currentToggle.type == ToggleType.BLINK) {
+            drawBlinkInfo(alpha);
         } else if (currentToggle != null) {
             drawToggleInfo(currentToggle, (int) (255 * alpha), 1f);
+        } else if (isBlinkActive()) {
+            drawBlinkInfo(alpha);
         } else if (isScaffoldActive()) {
             drawScaffoldInfo(alpha);
         } else {
@@ -690,6 +707,101 @@ public class DynamicIslandHud extends Module {
         Skia.drawLine(x6, y6, x7, y7, 1.2f, color);
         Skia.drawLine(x7, y7, x3, y3, 1.2f, color);
         Skia.drawLine(x5, y5, x1, y1, 1.2f, color);
+    }
+
+    private boolean isBlinkActive() {
+        if (Naven.getInstance() == null || Naven.getInstance().getModuleManager() == null) return false;
+        Module blink = Naven.getInstance().getModuleManager().getModule(Blink.class);
+        return blink != null && blink.isEnabled();
+    }
+
+    private void drawBlinkInfo(float alpha) {
+        if (alpha <= 0.05f) return;
+        if (Naven.getInstance() == null || Naven.getInstance().getModuleManager() == null) return;
+        Blink blink = (Blink) Naven.getInstance().getModuleManager().getModule(Blink.class);
+        if (blink == null) return;
+
+        long ticks = blink.getBlinkTicks();
+        float maxTicks = blink.maxTicks.getCurrentValue();
+        float progress = blinkProgressTimer.value;
+
+        float padding = 6f;
+        float iconSize = 10f;
+        float spacing = 6f;
+        float barHeight = 6f;
+        float barRadius = barHeight / 2f;
+
+        Font textFont = Fonts.getMiSans(10f);
+        String text = ticks + "/" + (int)maxTicks;
+        float textW = Skia.getStringWidth(text, textFont);
+
+        float centerY = animY + animH / 2f;
+        float iconX = animX + padding;
+        float iconY = centerY - iconSize / 2f;
+        drawNetworkIcon(iconX, iconY, iconSize, (int) (255 * alpha));
+
+        float textX = animX + animW - padding - textW;
+        float textY = getTextBaseline(centerY, textFont) - 1.0f;
+        Skia.drawText(text, textX, textY, withAlpha(Color.WHITE, (int) (255 * alpha)), textFont);
+
+        float barX = iconX + iconSize + spacing;
+        float barW = textX - spacing - barX;
+        if (barW > 2f) {
+            float barY = centerY - barHeight / 2f;
+            float fillW = barW * progress;
+            Color barBg = withAlpha(new Color(210, 210, 210), (int) (160 * alpha));
+            Color barFill = withAlpha(new Color(196, 128, 224), (int) (220 * alpha));
+            Path barPath = new Path();
+            barPath.addRRect(RRect.makeXYWH(barX, barY, barW, barHeight, barRadius));
+            Skia.save();
+            Skia.getCanvas().clipPath(barPath, ClipMode.INTERSECT, true);
+            Skia.drawRoundedRect(barX, barY, barW, barHeight, barRadius, barBg);
+            if (fillW > 0.5f) {
+                Skia.drawRoundedRect(barX, barY, fillW, barHeight, barRadius, barFill);
+            }
+            Skia.restore();
+            barPath.close();
+        }
+    }
+
+    private float calculateBlinkWidth() {
+        float padding = 6f;
+        float iconSize = 10f;
+        float spacing = 6f;
+        float minBarW = 65f;
+        Font textFont = Fonts.getMiSans(10f);
+        if (Naven.getInstance() == null || Naven.getInstance().getModuleManager() == null) return Size.EXPANDED_W;
+        Blink blink = (Blink) Naven.getInstance().getModuleManager().getModule(Blink.class);
+        if (blink == null) return Size.EXPANDED_W;
+
+        long ticks = blink.getBlinkTicks();
+        float maxTicks = blink.maxTicks.getCurrentValue();
+        String text = ticks + "/" + (int)maxTicks;
+        float textW = Skia.getStringWidth(text, textFont);
+        float needed = padding + iconSize + spacing + minBarW + spacing + textW + padding;
+        return Math.max(Size.EXPANDED_W, needed);
+    }
+
+    private void drawNetworkIcon(float x, float y, float size, int alpha) {
+        Color color = withAlpha(new Color(180, 180, 180), alpha);
+        float s = size;
+        float centerX = x + s / 2f;
+        float bottomY = y + s - 1f;
+
+        float stroke = 1.5f;
+        Paint paint = new Paint().setColor(io.github.humbleui.skija.Color.makeARGB(color.getAlpha(), color.getRed(), color.getGreen(), color.getBlue()));
+        paint.setMode(io.github.humbleui.skija.PaintMode.STROKE);
+        paint.setStrokeWidth(stroke);
+        paint.setStrokeCap(io.github.humbleui.skija.PaintStrokeCap.ROUND);
+
+        Paint fillPaint = new Paint().setColor(io.github.humbleui.skija.Color.makeARGB(color.getAlpha(), color.getRed(), color.getGreen(), color.getBlue()));
+        Skia.getCanvas().drawCircle(centerX, bottomY, 1.2f, fillPaint);
+
+        Skia.getCanvas().drawArc(centerX - 3.5f, bottomY - 3.5f, centerX + 3.5f, bottomY + 3.5f, 225f, 90f, false, paint);
+        Skia.getCanvas().drawArc(centerX - 6.5f, bottomY - 6.5f, centerX + 6.5f, bottomY + 6.5f, 225f, 90f, false, paint);
+
+        paint.close();
+        fillPaint.close();
     }
 
     private void drawSideInfo(float alpha) {
@@ -922,7 +1034,28 @@ public class DynamicIslandHud extends Module {
     }
 
     private void drawWinInfo(ToggleInfo toggle, int alpha) {
-        drawKillInfo(toggle, alpha);
+        float padding = 6f;
+        float iconSize = 12f;
+        float spacing = 5f;
+
+        Font textFont = Fonts.getMiSans(iconSize);
+        float centerY = animY + animH / 2f;
+        float iconX = animX + padding + iconSize / 2f;
+        float iconY = centerY + 1f;
+        Color accent = withAlpha(new Color(255, 215, 0), alpha);
+        int skColor = io.github.humbleui.skija.Color.makeARGB(accent.getAlpha(), accent.getRed(), accent.getGreen(), accent.getBlue());
+        try (Paint paint = new Paint().setColor(skColor);
+             Paint blurPaint = paint.makeClone().setImageFilter(ImageFilter.makeBlur(1.6F, 1.6F, FilterTileMode.DECAL))) {
+            Skia.getCanvas().drawCircle(iconX, iconY, iconSize / 2f, blurPaint);
+            Skia.getCanvas().drawCircle(iconX, iconY, iconSize / 2f, paint);
+        }
+
+        float textStartX = animX + padding + iconSize + spacing;
+        float textAreaW = animX + animW - padding - textStartX;
+        float textW = Skia.getStringWidth(toggle.name, textFont);
+        float textX = textStartX + Math.max(0f, (textAreaW - textW) / 2f);
+        float textY = getTextBaseline(centerY, textFont) - 1.5f;
+        Skia.drawText(toggle.name, textX, textY, withAlpha(Color.WHITE, alpha), textFont);
     }
 
     private void drawStatusIcon(float x, float y, float size, boolean enabled, int alpha) {
@@ -952,8 +1085,9 @@ public class DynamicIslandHud extends Module {
     private float calculateExpandedWidth(ToggleInfo toggle) {
         if (toggle == null) return Size.EXPANDED_W;
         if (toggle.type == ToggleType.SCAFFOLD) return calculateScaffoldWidth();
+        if (toggle.type == ToggleType.BLINK) return calculateBlinkWidth();
         float padding = 6f;
-        float iconSize = (toggle.type == ToggleType.KILL || toggle.type == ToggleType.WIN) ? 9f : 12f;
+        float iconSize = toggle.type == ToggleType.KILL ? 9f : 12f;
         float spacing = 5f;
         Font textFont = Fonts.getMiSans(iconSize);
         float textW = Skia.getStringWidth(toggle.name, textFont);
@@ -1059,6 +1193,7 @@ public class DynamicIslandHud extends Module {
     private enum ToggleType {
         MODULE,
         SCAFFOLD,
+        BLINK,
         KILL,
         WIN
     }
