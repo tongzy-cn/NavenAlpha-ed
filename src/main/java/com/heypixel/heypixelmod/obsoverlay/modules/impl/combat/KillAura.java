@@ -13,6 +13,7 @@ import com.heypixel.heypixelmod.obsoverlay.modules.impl.misc.Target;
 import com.heypixel.heypixelmod.obsoverlay.modules.impl.misc.Teams;
 import com.heypixel.heypixelmod.obsoverlay.modules.impl.move.Blink;
 import com.heypixel.heypixelmod.obsoverlay.modules.impl.move.Scaffold;
+import com.heypixel.heypixelmod.obsoverlay.modules.impl.render.DynamicIslandHud;
 import com.heypixel.heypixelmod.obsoverlay.utils.FriendManager;
 import com.heypixel.heypixelmod.obsoverlay.utils.RenderUtils;
 import com.heypixel.heypixelmod.obsoverlay.utils.rotation.RayCastUtil;
@@ -26,6 +27,7 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -103,6 +105,9 @@ public class KillAura extends Module {
             if (mc.player.getAttackStrengthScale(0.0F) >= 1.0F) {
                 mc.gameMode.attack(mc.player, target);
                 mc.player.swing(InteractionHand.MAIN_HAND);
+                if (target instanceof Player player) {
+                    DynamicIslandHud.onPlayerAttack(player);
+                }
             }
             return;
         }
@@ -114,6 +119,9 @@ public class KillAura extends Module {
         if (time - lastAttackTime >= delay) {
             mc.gameMode.attack(mc.player, target);
             mc.player.swing(InteractionHand.MAIN_HAND);
+            if (target instanceof Player player) {
+                DynamicIslandHud.onPlayerAttack(player);
+            }
 
             lastAttackTime = time;
         }

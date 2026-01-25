@@ -1,23 +1,38 @@
 package com.heypixel.heypixelmod.obsoverlay.modules.impl.render;
 
+import com.heypixel.heypixelmod.obsoverlay.Naven;
 import com.heypixel.heypixelmod.obsoverlay.events.api.EventTarget;
 import com.heypixel.heypixelmod.obsoverlay.events.api.types.EventType;
 import com.heypixel.heypixelmod.obsoverlay.events.impl.EventRenderSkia;
 import com.heypixel.heypixelmod.obsoverlay.events.impl.EventRenderTabOverlay;
+import com.heypixel.heypixelmod.obsoverlay.events.impl.EventPacket;
+import com.heypixel.heypixelmod.obsoverlay.events.impl.EventRespawn;
 import com.heypixel.heypixelmod.obsoverlay.modules.Category;
 import com.heypixel.heypixelmod.obsoverlay.modules.Module;
 import com.heypixel.heypixelmod.obsoverlay.modules.ModuleInfo;
+import com.heypixel.heypixelmod.obsoverlay.modules.impl.misc.InventoryCleaner;
+import com.heypixel.heypixelmod.obsoverlay.modules.impl.move.Scaffold;
+import com.heypixel.heypixelmod.obsoverlay.utils.InventoryUtils;
 import com.heypixel.heypixelmod.obsoverlay.utils.skia.Skia;
 import com.heypixel.heypixelmod.obsoverlay.utils.skia.font.Fonts;
+import com.heypixel.heypixelmod.obsoverlay.utils.skia.font.Icon;
 import com.heypixel.heypixelmod.obsoverlay.values.ValueBuilder;
 import com.heypixel.heypixelmod.obsoverlay.values.impl.BooleanValue;
 import com.heypixel.heypixelmod.obsoverlay.values.impl.FloatValue;
+import io.github.humbleui.skija.FilterTileMode;
+import io.github.humbleui.skija.Path;
 import io.github.humbleui.skija.Font;
 import io.github.humbleui.skija.FontMetrics;
+import io.github.humbleui.skija.ImageFilter;
+import io.github.humbleui.skija.Paint;
+import io.github.humbleui.types.Rect;
+import io.github.humbleui.types.RRect;
+import io.github.humbleui.skija.ClipMode;
 import net.minecraft.client.multiplayer.PlayerInfo;
 import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.entity.player.Player;
@@ -29,6 +44,9 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.stream.Collectors;
 
 @ModuleInfo(
@@ -50,7 +68,7 @@ public class DynamicIslandHud extends Module {
         static final float EXPANDED_H = 25f;
         static final float ELEMENT_SPACING = 20f;
         static final float ELEMENT_WIDTH = 50f;
-        static final float LOGO_FONT_SIZE = 12f;
+        static final float LOGO_FONT_SIZE = 14f;
         static final float INFO_FONT_SIZE = 10f;
         static final Color INVENTORY_BG_COLOR = new Color(18, 18, 18, 70);
 
@@ -106,6 +124,8 @@ public class DynamicIslandHud extends Module {
 
     private static ToggleInfo currentToggle;
     private static ToggleInfo pendingToggle;
+    private static ToggleInfo pendingKill;
+    private static final Set<UUID> attackedPlayers = new CopyOnWriteArraySet<>();
     private long toggleStartTime = -1L;
     private long tabStartTime = -1L;
     private float targetExpandedWidth = Size.EXPANDED_W;
@@ -125,14 +145,29 @@ public class DynamicIslandHud extends Module {
 
     public static void onModuleToggle(Module module, boolean enabled) {
         if (module instanceof DynamicIslandHud) return;
-        // Prevent re-triggering animation for the same module and state if it's currently displaying
-        if (currentToggle != null && currentToggle.name.equals(module.getName()) && currentToggle.enabled == enabled) {
-            // Refresh timer by creating a new pending toggle which will reset the timer in processToggle
-            // This avoids accessing non-static toggleStartTime from static context
-            pendingToggle = new ToggleInfo(module.getName(), enabled);
+        if (module instanceof Scaffold) {
+            if (currentToggle != null && currentToggle.type == ToggleType.SCAFFOLD && currentToggle.enabled == enabled) {
+                pendingToggle = new ToggleInfo(module.getName(), enabled, ToggleType.SCAFFOLD);
+                return;
+            }
+            pendingToggle = new ToggleInfo(module.getName(), enabled, ToggleType.SCAFFOLD);
             return;
         }
-        pendingToggle = new ToggleInfo(module.getName(), enabled);
+        if (currentToggle != null && currentToggle.type == ToggleType.MODULE && currentToggle.name.equals(module.getName()) && currentToggle.enabled == enabled) {
+            pendingToggle = new ToggleInfo(module.getName(), enabled, ToggleType.MODULE);
+            return;
+        }
+        pendingToggle = new ToggleInfo(module.getName(), enabled, ToggleType.MODULE);
+    }
+
+    public static void onPlayerAttack(Player player) {
+        if (player == null) return;
+        attackedPlayers.add(player.getUUID());
+    }
+
+    private static void onKill(String playerName) {
+        if (playerName == null || playerName.isEmpty()) return;
+        pendingKill = new ToggleInfo("You killed " + playerName + " !", true, ToggleType.KILL);
     }
 
     @EventTarget
@@ -153,6 +188,30 @@ public class DynamicIslandHud extends Module {
         } else if (e.getType() == EventType.FOOTER) {
             capturedTabFooter = e.getComponent();
         }
+    }
+
+    @EventTarget
+    public void onPacket(EventPacket e) {
+        if (e.getType() != EventType.RECEIVE || !(e.getPacket() instanceof ClientboundPlayerInfoRemovePacket packet) || mc.getConnection() == null) {
+            return;
+        }
+
+        for (UUID entry : packet.profileIds()) {
+            if (!attackedPlayers.contains(entry)) {
+                continue;
+            }
+            PlayerInfo playerInfo = mc.getConnection().getPlayerInfo(entry);
+            if (playerInfo != null) {
+                onKill(playerInfo.getProfile().getName());
+            }
+            attackedPlayers.remove(entry);
+        }
+    }
+
+    @EventTarget
+    public void onRespawn(EventRespawn e) {
+        attackedPlayers.clear();
+        pendingKill = null;
     }
 
     private void update() {
@@ -216,44 +275,45 @@ public class DynamicIslandHud extends Module {
         if (isTabPhase()) return;
 
         if (pendingToggle != null) {
-            float newTargetW = calculateExpandedWidth(pendingToggle);
-            
-            // Smart State Transition
-            if (phase == Phase.EXPANDING || phase == Phase.DISPLAY) {
-                // If expanding or displaying, just update content and target width.
-                // Maintain current timing to avoid "restart" glitch.
-                // For DISPLAY, we reset time to extend the display period.
-                if (phase == Phase.DISPLAY) {
-                    toggleStartTime = System.currentTimeMillis() - Timing.EXPAND;
-                }
-                currentToggle = pendingToggle;
-                targetExpandedWidth = newTargetW;
-            } else if (phase == Phase.COLLAPSE_1 || phase == Phase.COLLAPSE_2) {
-                // If collapsing, we need to reverse to expanding.
-                // Calculate "equivalent progress" to match current width and avoid jump.
-                // currentW = lerp(p, BASE, TARGET) => p = (currentW - BASE) / (TARGET - BASE)
-                float currentW = animW;
-                float baseW = Size.BASE_W;
-                float p = clamp((currentW - baseW) / (newTargetW - baseW));
-                
-                // Inverse EaseOut: t = 1 - cbrt(1 - p)
-                // We want to set startTime such that easeOut(elapsed/TOTAL) == p
-                float t = 1f - (float) Math.cbrt(1f - p);
-                toggleStartTime = System.currentTimeMillis() - (long)(t * Timing.EXPAND);
-                
-                currentToggle = pendingToggle;
-                targetExpandedWidth = newTargetW;
-                // Phase will be set to EXPANDING in calculateState based on the rewound time
-            } else {
-                // IDLE or other
-                currentToggle = pendingToggle;
-                toggleStartTime = System.currentTimeMillis();
-                targetExpandedWidth = newTargetW;
-            }
+            applyPending(pendingToggle);
             pendingToggle = null;
+        } else if (pendingKill != null) {
+            applyPending(pendingKill);
+            pendingKill = null;
         } else if (currentToggle != null && elapsedToggle() >= Timing.TOTAL) {
             currentToggle = null;
             toggleStartTime = -1L;
+        }
+    }
+
+    private void applyPending(ToggleInfo next) {
+        float newTargetW = calculateExpandedWidth(next);
+        if (next.type == ToggleType.SCAFFOLD && !next.enabled) {
+            currentToggle = next;
+            targetExpandedWidth = newTargetW;
+            toggleStartTime = System.currentTimeMillis() - (Timing.EXPAND + Timing.DISPLAY);
+            return;
+        }
+
+        if (phase == Phase.EXPANDING || phase == Phase.DISPLAY) {
+            if (phase == Phase.DISPLAY) {
+                toggleStartTime = System.currentTimeMillis() - Timing.EXPAND;
+            }
+            currentToggle = next;
+            targetExpandedWidth = newTargetW;
+        } else if (phase == Phase.COLLAPSE_1 || phase == Phase.COLLAPSE_2) {
+            float currentW = animW;
+            float baseW = Size.BASE_W;
+            float p = clamp((currentW - baseW) / (newTargetW - baseW));
+            float t = 1f - (float) Math.cbrt(1f - p);
+            toggleStartTime = System.currentTimeMillis() - (long)(t * Timing.EXPAND);
+
+            currentToggle = next;
+            targetExpandedWidth = newTargetW;
+        } else {
+            currentToggle = next;
+            toggleStartTime = System.currentTimeMillis();
+            targetExpandedWidth = newTargetW;
         }
     }
 
@@ -300,19 +360,24 @@ public class DynamicIslandHud extends Module {
             setPhase(Phase.TAB_DISPLAY, 1f, tabTargetW, tabTargetH, 1f);
             targetAnimW = tabTargetW;
         } else {
+            float idleW = isScaffoldActive() ? calculateScaffoldWidth() : Size.BASE_W;
+            float expandStartW = idleW;
+            if (currentToggle != null && currentToggle.type == ToggleType.SCAFFOLD) {
+                expandStartW = Size.BASE_W;
+            }
             if (currentToggle == null && toggleStartTime == -1L) {
-                setPhase(Phase.IDLE, 0f, Size.BASE_W, Size.BASE_H, 1f);
-                targetAnimW = Size.BASE_W;
+                setPhase(Phase.IDLE, 0f, idleW, Size.BASE_H, 1f);
+                targetAnimW = idleW;
             } else if (dt < Timing.EXPAND) {
                 float p = easeOut(dt / (float) Timing.EXPAND);
                 setPhase(Phase.EXPANDING, p,
-                        lerp(p, Size.BASE_W, targetExpandedWidth),
+                        lerp(p, expandStartW, targetExpandedWidth),
                         lerp(p, Size.BASE_H, Size.EXPANDED_H),
                         1f);
-                targetAnimW = lerp(p, Size.BASE_W, targetExpandedWidth);
+                targetAnimW = lerp(p, expandStartW, targetExpandedWidth);
             } else if (dt < Timing.EXPAND + Timing.DISPLAY) {
                 float p = (dt - Timing.EXPAND) / (float) Timing.DISPLAY;
-                setPhase(Phase.DISPLAY, p, targetExpandedWidth, Size.EXPANDED_H, 1f);
+                setPhase(Phase.DISPLAY, p, animW, Size.EXPANDED_H, 1f);
                 targetAnimW = targetExpandedWidth;
             } else if (dt < Timing.EXPAND + Timing.DISPLAY + Timing.COLLAPSE_1) {
                 float p = easeOut((dt - Timing.EXPAND - Timing.DISPLAY) / (float) Timing.COLLAPSE_1);
@@ -321,10 +386,10 @@ public class DynamicIslandHud extends Module {
             } else {
                 float p = easeOut((dt - Timing.EXPAND - Timing.DISPLAY - Timing.COLLAPSE_1) / (float) Timing.COLLAPSE_2);
                 setPhase(Phase.COLLAPSE_2, p,
-                        lerp(p, targetExpandedWidth, Size.BASE_W),
+                        lerp(p, targetExpandedWidth, idleW),
                         lerp(p, Size.EXPANDED_H, Size.BASE_H),
                         1f);
-                targetAnimW = lerp(p, targetExpandedWidth, Size.BASE_W);
+                targetAnimW = lerp(p, targetExpandedWidth, idleW);
             }
         }
 
@@ -385,36 +450,53 @@ public class DynamicIslandHud extends Module {
     private void renderIdle() {
         drawBackground(Size.INVENTORY_BG_COLOR);
         drawSideInfo(1f);
-        drawCenteredTitle(1f);
+        if (isScaffoldActive()) {
+            drawScaffoldInfo(1f);
+        } else {
+            drawCenteredTitle(1f);
+        }
     }
 
     private void renderExpanding() {
         drawBackground(Size.INVENTORY_BG_COLOR);
         drawSideInfo(1f);
-        if (currentToggle != null) {
-            drawToggleInfo(alphaFromProgress(progress), 0f);
+        if (currentToggle != null && currentToggle.type == ToggleType.SCAFFOLD) {
+            drawScaffoldInfo(progress);
+        } else if (currentToggle != null) {
+            drawToggleInfo(currentToggle, alphaFromProgress(progress), 0f);
+        } else if (isScaffoldActive()) {
+            drawScaffoldInfo(1f);
         }
     }
 
     private void renderDisplay() {
         drawBackground(Size.INVENTORY_BG_COLOR);
         drawSideInfo(1f);
-        if (currentToggle != null) {
-            drawToggleInfo(255, progress);
+        if (currentToggle != null && currentToggle.type == ToggleType.SCAFFOLD) {
+            drawScaffoldInfo(1f);
+        } else if (currentToggle != null) {
+            drawToggleInfo(currentToggle, 255, progress);
+        } else if (isScaffoldActive()) {
+            drawScaffoldInfo(1f);
         }
     }
 
     private void renderCollapse1() {
         drawBackground(Size.INVENTORY_BG_COLOR);
         drawSideInfo(1f);
-        if (currentToggle != null) {
-            drawToggleInfo(alphaFromProgress(1f - progress), 1f);
+        if (currentToggle != null && currentToggle.type == ToggleType.SCAFFOLD) {
+            drawScaffoldInfo(1f - progress);
+        } else if (currentToggle != null) {
+            drawToggleInfo(currentToggle, alphaFromProgress(1f - progress), 1f);
         }
     }
 
     private void renderCollapse2() {
         drawBackground(Size.INVENTORY_BG_COLOR);
         drawSideInfo(1f);
+        if (isScaffoldActive()) {
+            drawScaffoldInfo(1f);
+        }
     }
 
     private void renderTabExpand() {
@@ -450,47 +532,191 @@ public class DynamicIslandHud extends Module {
         if (alpha <= 0.05f) return;
         Font font = Fonts.getUrbanistVariable(Size.LOGO_FONT_SIZE);
         String name = "Naven";
-        float textW = Skia.getStringWidth(name, font);
-        Color color = withAlpha(Color.WHITE, (int) (255 * alpha));
+        Color color = withAlpha(new Color(255, 105, 180), (int) (255 * alpha));
+        Rect bounds = font.measureText(name);
+        FontMetrics metrics = font.getMetrics();
+        float centerX = animX + animW / 2f;
         float centerY = animY + animH / 2f;
-        float textY = getTextBaseline(centerY, font);
-        Skia.drawText(name, animX + (animW - textW) / 2f, textY, color, font);
+        float bx = centerX - bounds.getLeft() - (bounds.getWidth() / 2f);
+        float by = centerY + (metrics.getAscent() - metrics.getDescent()) / 2f - metrics.getAscent();
+        int skColor = io.github.humbleui.skija.Color.makeARGB(color.getAlpha(), color.getRed(), color.getGreen(), color.getBlue());
+        try (Paint paint = new Paint().setColor(skColor);
+             Paint blurPaint = paint.makeClone().setImageFilter(ImageFilter.makeBlur(1.0F, 1.0F, FilterTileMode.DECAL))) {
+            Skia.getCanvas().drawString(name, bx, by, font, blurPaint);
+            Skia.getCanvas().drawString(name, bx - 0.2f, by, font, paint);
+            Skia.getCanvas().drawString(name, bx + 0.2f, by, font, paint);
+            Skia.getCanvas().drawString(name, bx, by, font, paint);
+        }
+    }
+
+    private boolean isScaffoldActive() {
+        if (Naven.getInstance() == null || Naven.getInstance().getModuleManager() == null) return false;
+        Module scaffold = Naven.getInstance().getModuleManager().getModule(Scaffold.class);
+        return scaffold != null && scaffold.isEnabled();
+    }
+
+    private void drawScaffoldInfo(float alpha) {
+        if (alpha <= 0.05f) return;
+        int blockCount = InventoryUtils.getBlockCountInInventory();
+        int maxCount = Math.max(1, InventoryCleaner.getMaxBlockSize());
+        float progress = clamp(blockCount / (float) maxCount);
+
+        float padding = 6f;
+        float iconSize = 10f;
+        float spacing = 6f;
+        float barHeight = 6f;
+        float barRadius = barHeight / 2f;
+
+        Font textFont = Fonts.getMiSans(10f);
+        String text = blockCount + "/" + maxCount;
+        float textW = Skia.getStringWidth(text, textFont);
+
+        float centerY = animY + animH / 2f;
+        float iconX = animX + padding;
+        float iconY = centerY - iconSize / 2f;
+        drawCubeIcon(iconX, iconY, iconSize, (int) (255 * alpha));
+
+        float textX = animX + animW - padding - textW;
+        float textY = getTextBaseline(centerY, textFont) - 1.0f;
+        Skia.drawText(text, textX, textY, withAlpha(Color.WHITE, (int) (255 * alpha)), textFont);
+
+        float barX = iconX + iconSize + spacing;
+        float barW = textX - spacing - barX;
+        if (barW > 2f) {
+            float barY = centerY - barHeight / 2f;
+            float fillW = barW * progress;
+            Color barBg = withAlpha(new Color(210, 210, 210), (int) (160 * alpha));
+            Color barFill = withAlpha(new Color(196, 128, 224), (int) (220 * alpha));
+            Path barPath = new Path();
+            barPath.addRRect(RRect.makeXYWH(barX, barY, barW, barHeight, barRadius));
+            Skia.save();
+            Skia.getCanvas().clipPath(barPath, ClipMode.INTERSECT, true);
+            Skia.drawRoundedRect(barX, barY, barW, barHeight, barRadius, barBg);
+            if (fillW > 0.5f) {
+                Skia.drawRoundedRect(barX, barY, fillW, barHeight, barRadius, barFill);
+            }
+            Skia.restore();
+            barPath.close();
+        }
+    }
+
+    private float calculateScaffoldWidth() {
+        float padding = 6f;
+        float iconSize = 10f;
+        float spacing = 6f;
+        float minBarW = 65f;
+        Font textFont = Fonts.getMiSans(10f);
+        int blockCount = InventoryUtils.getBlockCountInInventory();
+        int maxCount = Math.max(1, InventoryCleaner.getMaxBlockSize());
+        String text = blockCount + "/" + maxCount;
+        float textW = Skia.getStringWidth(text, textFont);
+        float needed = padding + iconSize + spacing + minBarW + spacing + textW + padding;
+        return Math.max(Size.EXPANDED_W, needed);
+    }
+
+    private void drawCubeIcon(float x, float y, float size, int alpha) {
+        Color color = withAlpha(new Color(180, 180, 180), alpha);
+        float s = size;
+        float offset = s * 0.25f;
+        float x1 = x;
+        float y1 = y + offset;
+        float x2 = x + s - offset;
+        float y2 = y + offset;
+        float x3 = x + s - offset;
+        float y3 = y + s;
+        float x4 = x;
+        float y4 = y + s;
+        float x5 = x + offset;
+        float y5 = y;
+        float x6 = x + s;
+        float y6 = y;
+        float x7 = x + s;
+        float y7 = y + s - offset;
+        Skia.drawLine(x1, y1, x2, y2, 1.2f, color);
+        Skia.drawLine(x2, y2, x3, y3, 1.2f, color);
+        Skia.drawLine(x3, y3, x4, y4, 1.2f, color);
+        Skia.drawLine(x4, y4, x1, y1, 1.2f, color);
+        Skia.drawLine(x5, y5, x6, y6, 1.2f, color);
+        Skia.drawLine(x6, y6, x7, y7, 1.2f, color);
+        Skia.drawLine(x7, y7, x3, y3, 1.2f, color);
+        Skia.drawLine(x5, y5, x1, y1, 1.2f, color);
     }
 
     private void drawSideInfo(float alpha) {
         if (alpha <= 0.05f) return;
         Font font = Fonts.getMiSans(Size.INFO_FONT_SIZE);
+        Font iconFont = Fonts.getIcon(Size.INFO_FONT_SIZE);
         float sideH = Size.BASE_H;
         float centerY = animY + sideH / 2f;
         float textY = getTextBaseline(centerY, font);
         Color color = withAlpha(Color.WHITE, (int) (255 * alpha));
         Color bgColor = withAlpha(Size.INVENTORY_BG_COLOR, (int) (70 * alpha));
+        float padding = 6f;
+        float iconSpacing = 4f;
 
         String time = LocalTime.now().format(TIME_FORMAT);
-        float timeW = Skia.getStringWidth(time, font);
-        float timeBgX = animX - Size.ELEMENT_SPACING - Size.ELEMENT_WIDTH;
+        String timeIcon = Icon.ALARM;
+        Rect timeIconBounds = Skia.getTextBounds(timeIcon, iconFont);
+        Rect timeTextBounds = Skia.getTextBounds(time, font);
+        float timeIconW = timeIconBounds.getWidth();
+        float timeTextW = timeTextBounds.getWidth();
+        float timeTextStart = timeIconW + iconSpacing;
+        float timeGroupLeft = Math.min(timeIconBounds.getLeft(), timeTextStart + timeTextBounds.getLeft());
+        float timeGroupRight = Math.max(timeIconBounds.getLeft() + timeIconW, timeTextStart + timeTextBounds.getLeft() + timeTextW);
+        float timeGroupW = timeGroupRight - timeGroupLeft;
+        float timeBgW = Math.max(Size.ELEMENT_WIDTH, padding * 2f + timeGroupW);
+        float timeBgX = animX - Size.ELEMENT_SPACING - timeBgW;
+        float timeTextCenterY = textY + (timeTextBounds.getTop() + timeTextBounds.getBottom()) / 2f;
+        float timeIconY = timeTextCenterY - (timeIconBounds.getTop() + timeIconBounds.getBottom()) / 2f;
 
         if (enableBloom.getCurrentValue()) {
-            Skia.drawShadow(timeBgX, animY, Size.ELEMENT_WIDTH, sideH, getRadius());
+            Skia.drawShadow(timeBgX, animY, timeBgW, sideH, getRadius());
         }
         if (blur.getCurrentValue() && blurOpacity > 0.05f) {
-            Skia.drawRoundedBlur(timeBgX, animY, Size.ELEMENT_WIDTH, sideH, getRadius());
+            Skia.drawRoundedBlur(timeBgX, animY, timeBgW, sideH, getRadius());
         }
-        Skia.drawRoundedRect(timeBgX, animY, Size.ELEMENT_WIDTH, sideH, getRadius(), bgColor);
-        Skia.drawText(time, timeBgX + (Size.ELEMENT_WIDTH - timeW) / 2f, textY, color, font);
+        Skia.drawRoundedRect(timeBgX, animY, timeBgW, sideH, getRadius(), bgColor);
+        float timeInnerW = timeBgW - padding * 2f;
+        float timeStartX = timeBgX + timeBgW / 2f - timeGroupW / 2f - timeGroupLeft;
+        float timeClipX = timeBgX + padding;
+        float timeClipW = Math.max(0f, timeInnerW);
+        Skia.save();
+        Skia.clip(timeClipX, animY, timeClipW, sideH, getRadius());
+        Skia.drawText(timeIcon, timeStartX, timeIconY, color, iconFont);
+        Skia.drawText(time, timeStartX + timeTextStart, textY, color, font);
+        Skia.restore();
 
         String fps = "FPS:" + mc.getFps();
-        float fpsW = Skia.getStringWidth(fps, font);
+        String fpsIcon = Icon.LAPTOP;
+        Rect fpsIconBounds = Skia.getTextBounds(fpsIcon, iconFont);
+        Rect fpsTextBounds = Skia.getTextBounds(fps, font);
+        float fpsIconW = fpsIconBounds.getWidth();
+        float fpsTextW = fpsTextBounds.getWidth();
+        float fpsTextStart = fpsIconW + iconSpacing;
+        float fpsGroupLeft = Math.min(fpsIconBounds.getLeft(), fpsTextStart + fpsTextBounds.getLeft());
+        float fpsGroupRight = Math.max(fpsIconBounds.getLeft() + fpsIconW, fpsTextStart + fpsTextBounds.getLeft() + fpsTextW);
+        float fpsGroupW = fpsGroupRight - fpsGroupLeft;
+        float fpsBgW = Math.max(Size.ELEMENT_WIDTH, padding * 2f + fpsGroupW);
         float nameBgX = animX + animW + Size.ELEMENT_SPACING;
+        float fpsTextCenterY = textY + (fpsTextBounds.getTop() + fpsTextBounds.getBottom()) / 2f;
+        float fpsIconY = fpsTextCenterY - (fpsIconBounds.getTop() + fpsIconBounds.getBottom()) / 2f;
 
         if (enableBloom.getCurrentValue()) {
-            Skia.drawShadow(nameBgX, animY, Size.ELEMENT_WIDTH, sideH, getRadius());
+            Skia.drawShadow(nameBgX, animY, fpsBgW, sideH, getRadius());
         }
         if (blur.getCurrentValue() && blurOpacity > 0.05f) {
-            Skia.drawRoundedBlur(nameBgX, animY, Size.ELEMENT_WIDTH, sideH, getRadius());
+            Skia.drawRoundedBlur(nameBgX, animY, fpsBgW, sideH, getRadius());
         }
-        Skia.drawRoundedRect(nameBgX, animY, Size.ELEMENT_WIDTH, sideH, getRadius(), bgColor);
-        Skia.drawText(fps, nameBgX + (Size.ELEMENT_WIDTH - fpsW) / 2f, textY, color, font);
+        Skia.drawRoundedRect(nameBgX, animY, fpsBgW, sideH, getRadius(), bgColor);
+        float fpsInnerW = fpsBgW - padding * 2f;
+        float fpsStartX = nameBgX + fpsBgW / 2f - fpsGroupW / 2f - fpsGroupLeft;
+        float fpsClipX = nameBgX + padding;
+        float fpsClipW = Math.max(0f, fpsInnerW);
+        Skia.save();
+        Skia.clip(fpsClipX, animY, fpsClipW, sideH, getRadius());
+        Skia.drawText(fpsIcon, fpsStartX, fpsIconY, color, iconFont);
+        Skia.drawText(fps, fpsStartX + fpsTextStart, textY, color, font);
+        Skia.restore();
     }
 
     private void renderCapturedTab() {
@@ -523,7 +749,8 @@ public class DynamicIslandHud extends Module {
         for (String line : headerLines) {
             float lineW = Skia.getStringWidth(line, font);
             float x = animX + (animW - lineW) / 2f;
-            Skia.drawText(line, x, y, textColor, font);
+            float lineY = getTextBaseline(y + fontH / 2f, font);
+            Skia.drawText(line, x, lineY, textColor, font);
             y += fontH;
         }
         y += 8f;
@@ -579,7 +806,8 @@ public class DynamicIslandHud extends Module {
             for (String line : footerLines) {
                 float lineW = Skia.getStringWidth(line, font);
                 float x = animX + (animW - lineW) / 2f;
-                Skia.drawText(line, x, footerY, textColor, font);
+                float lineY = getTextBaseline(footerY + fontH / 2f, font);
+                Skia.drawText(line, x, lineY, textColor, font);
                 footerY += fontH;
             }
         }
@@ -587,8 +815,12 @@ public class DynamicIslandHud extends Module {
         Skia.restore();
     }
 
-    private void drawToggleInfo(int alpha, float timeProgress) {
-        if (currentToggle == null) return;
+    private void drawToggleInfo(ToggleInfo toggle, int alpha, float timeProgress) {
+        if (toggle == null) return;
+        if (toggle.type == ToggleType.KILL) {
+            drawKillInfo(toggle, alpha);
+            return;
+        }
         float padding = 6f;
         float iconSize = 12f;
         float spacing = 5f;
@@ -598,13 +830,41 @@ public class DynamicIslandHud extends Module {
 
         // Draw Icon - Move down slightly to center visually
         float iconY = centerY - iconSize / 2f + 1f;
-        drawStatusIcon(animX + padding, iconY, iconSize, currentToggle.enabled, alpha);
+        drawStatusIcon(animX + padding, iconY, iconSize, toggle.enabled, alpha);
 
         // Draw Text - Move up slightly to match icon visual center
-        float textX = animX + padding + iconSize + spacing;
+        float textStartX = animX + padding + iconSize + spacing;
+        float textAreaW = animX + animW - padding - textStartX;
+        float textW = Skia.getStringWidth(toggle.name, textFont);
+        float textX = textStartX + Math.max(0f, (textAreaW - textW) / 2f);
         // The default getTextBaseline with -7f might be too low for 12f font, so we lift it up
         float textY = getTextBaseline(centerY, textFont) - 1.5f;
-        Skia.drawText(currentToggle.name, textX, textY, withAlpha(Color.WHITE, alpha), textFont);
+        Skia.drawText(toggle.name, textX, textY, withAlpha(Color.WHITE, alpha), textFont);
+    }
+
+    private void drawKillInfo(ToggleInfo toggle, int alpha) {
+        float padding = 6f;
+        float iconSize = 9f;
+        float spacing = 5f;
+
+        Font textFont = Fonts.getMiSans(iconSize);
+        float centerY = animY + animH / 2f;
+        float iconX = animX + padding + iconSize / 2f;
+        float iconY = centerY;
+        Color glowColor = withAlpha(new Color(255, 105, 180), alpha);
+        int skColor = io.github.humbleui.skija.Color.makeARGB(glowColor.getAlpha(), glowColor.getRed(), glowColor.getGreen(), glowColor.getBlue());
+        try (Paint paint = new Paint().setColor(skColor);
+             Paint blurPaint = paint.makeClone().setImageFilter(ImageFilter.makeBlur(1.6F, 1.6F, FilterTileMode.DECAL))) {
+            Skia.getCanvas().drawCircle(iconX, iconY, iconSize / 2f, blurPaint);
+            Skia.getCanvas().drawCircle(iconX, iconY, iconSize / 2f, paint);
+        }
+
+        float textStartX = animX + padding + iconSize + spacing;
+        float textAreaW = animX + animW - padding - textStartX;
+        float textW = Skia.getStringWidth(toggle.name, textFont);
+        float textX = textStartX + Math.max(0f, (textAreaW - textW) / 2f);
+        float textY = getTextBaseline(centerY, textFont) - 1.0f;
+        Skia.drawText(toggle.name, textX, textY, withAlpha(Color.WHITE, alpha), textFont);
     }
 
     private void drawStatusIcon(float x, float y, float size, boolean enabled, int alpha) {
@@ -633,8 +893,9 @@ public class DynamicIslandHud extends Module {
 
     private float calculateExpandedWidth(ToggleInfo toggle) {
         if (toggle == null) return Size.EXPANDED_W;
+        if (toggle.type == ToggleType.SCAFFOLD) return calculateScaffoldWidth();
         float padding = 6f;
-        float iconSize = 12f;
+        float iconSize = toggle.type == ToggleType.KILL ? 9f : 12f;
         float spacing = 5f;
         Font textFont = Fonts.getMiSans(iconSize);
         float textW = Skia.getStringWidth(toggle.name, textFont);
@@ -737,6 +998,12 @@ public class DynamicIslandHud extends Module {
         return lines;
     }
 
-    private record ToggleInfo(String name, boolean enabled) {
+    private enum ToggleType {
+        MODULE,
+        SCAFFOLD,
+        KILL
+    }
+
+    private record ToggleInfo(String name, boolean enabled, ToggleType type) {
     }
 }
