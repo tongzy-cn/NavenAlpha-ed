@@ -88,6 +88,10 @@ public class Skia {
         glowTasks.clear();
     }
 
+    public static void flushGlows() {
+        renderGlows();
+    }
+
     private static final int[] COLOR_CODES = new int[]{
             0xFF000000, 0xFF0000AA, 0xFF00AA00, 0xFF00AAAA, 0xFFAA0000, 0xFFAA00AA, 0xFFAA5500, 0xFFAAAAAA,
             0xFF555555, 0xFF5555FF, 0xFF55FF55, 0xFF55FFFF, 0xFFFF5555, 0xFFFF55FF, 0xFFFFFF55, 0xFFFFFFFF
@@ -146,6 +150,18 @@ public class Skia {
                 SurfaceOrigin.BOTTOM_LEFT);
         restore();
 
+    }
+
+    public static void drawRoundedGuiBlur(float x, float y, float width, float height, float radius) {
+        Window window = Minecraft.getInstance().getWindow();
+        Path path = new Path();
+        path.addRRect(RRect.makeXYWH(x, y, width, height, radius));
+
+        save();
+        getCanvas().clipPath(path, ClipMode.INTERSECT, true);
+        drawImage(KawaseBlur.GUI_BLUR.getTexture(), 0, 0, window.getWidth() / (float) window.getGuiScale(), window.getHeight() / (float) window.getGuiScale(), 1F,
+                SurfaceOrigin.BOTTOM_LEFT);
+        restore();
     }
 
     public static void drawGuiBlur() {
@@ -285,8 +301,11 @@ public class Skia {
 
     public static void drawPlayerHead(AbstractClientPlayer player, float x, float y, float width, float height, float radius) {
         if (player == null) return;
+        drawPlayerHead(player.getSkinTextureLocation(), x, y, width, height, radius);
+    }
 
-        ResourceLocation skinLoc = player.getSkinTextureLocation();
+    public static void drawPlayerHead(ResourceLocation skinLoc, float x, float y, float width, float height, float radius) {
+        if (skinLoc == null) return;
         AbstractTexture texture = Minecraft.getInstance().getTextureManager().getTexture(skinLoc);
         texture.bind();
         int textureId = texture.getId();
@@ -573,33 +592,29 @@ public class Skia {
 
         FontMetrics metrics = font.getMetrics();
         Rect bounds = font.measureText(text);
-        float bx = x - bounds.getLeft();
-        float by = y - bounds.getTop();
-        
-        // Queue blur task (simple)
-        if (PostProcess.isGlowEnabled()) {
-            glowTasks.add(new TextGlowTask(text, bx, by, color, font, 1.0F, false));
-        }
         
         float textCenterY = y + (metrics.getAscent() - metrics.getDescent()) / 2 - metrics.getAscent();
+        float drawX = x - bounds.getLeft();
 
-        getCanvas().drawString(text, x - bounds.getLeft(), textCenterY, font, getPaint(color));
+        // Queue blur task (simple)
+        if (PostProcess.isGlowEnabled()) {
+            glowTasks.add(new TextGlowTask(text, drawX, textCenterY, color, font, 1.0F, false));
+        }
+
+        getCanvas().drawString(text, drawX, textCenterY, font, getPaint(color));
     }
 
     public static void drawFullCenteredText(String text, float x, float y, Color color, Font font) {
         Rect bounds = font.measureText(text);
-        float bx = x - bounds.getLeft();
-        float by = y - bounds.getTop();
-        
-        // Queue blur task (simple)
-        if (PostProcess.isGlowEnabled()) {
-            glowTasks.add(new TextGlowTask(text, bx, by, color, font, 1.0F, false));
-        }
-        
         FontMetrics metrics = font.getMetrics();
 
         float textCenterX = x - bounds.getLeft() - (bounds.getWidth() / 2);
         float textCenterY = y + (metrics.getAscent() - metrics.getDescent()) / 2 - metrics.getAscent();
+        
+        // Queue blur task (simple)
+        if (PostProcess.isGlowEnabled()) {
+            glowTasks.add(new TextGlowTask(text, textCenterX, textCenterY, color, font, 1.0F, false));
+        }
 
         getCanvas().drawString(text, textCenterX, textCenterY, font, getPaint(color));
     }

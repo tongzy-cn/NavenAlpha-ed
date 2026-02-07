@@ -1,11 +1,13 @@
 package com.heypixel.heypixelmod.mixin.O;
 
 import com.heypixel.heypixelmod.obsoverlay.Naven;
+import com.heypixel.heypixelmod.obsoverlay.Version;
 import com.heypixel.heypixelmod.obsoverlay.events.api.types.EventType;
 import com.heypixel.heypixelmod.obsoverlay.events.impl.EventClick;
 import com.heypixel.heypixelmod.obsoverlay.events.impl.EventRunTicks;
 import com.heypixel.heypixelmod.obsoverlay.events.impl.EventShutdown;
 import com.heypixel.heypixelmod.obsoverlay.modules.impl.render.Glow;
+import com.heypixel.heypixelmod.obsoverlay.ui.MainMenuScreen;
 import com.heypixel.heypixelmod.obsoverlay.utils.AnimationUtils;
 import com.heypixel.heypixelmod.obsoverlay.utils.auth.AuthInit;
 import com.heypixel.heypixelmod.obsoverlay.utils.shader.impl.KawaseBlur;
@@ -13,6 +15,8 @@ import com.heypixel.heypixelmod.obsoverlay.utils.skia.context.SkiaContext;
 import com.mojang.blaze3d.platform.Window;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.main.GameConfig;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.world.entity.Entity;
 import net.minecraftforge.fml.ModList;
 import net.minecraftforge.forgespi.language.IModFileInfo;
@@ -23,6 +27,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.At.Shift;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
+import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
@@ -132,6 +137,14 @@ public class MixinMinecraft {
         return g;
     }
 
+    @ModifyVariable(method = "setScreen", at = @At("HEAD"), argsOnly = true)
+    private Screen replaceTitleScreen(Screen screen) {
+        if (screen instanceof TitleScreen) {
+            return new MainMenuScreen();
+        }
+        return screen;
+    }
+
     @Inject(
             method = {"handleKeybinds"},
             at = {@At(
@@ -161,5 +174,10 @@ public class MixinMinecraft {
         SkiaContext.createSurface(window.getWidth(), window.getHeight());
         KawaseBlur.GUI_BLUR.resize();
         KawaseBlur.INGAME_BLUR.resize();
+    }
+
+    @Inject(method = "createTitle", at = @At("HEAD"), cancellable = true)
+    private void hookCreateTitle(CallbackInfoReturnable<String> cir) {
+        cir.setReturnValue("Naven Alpha " + Version.getVersion());
     }
 }

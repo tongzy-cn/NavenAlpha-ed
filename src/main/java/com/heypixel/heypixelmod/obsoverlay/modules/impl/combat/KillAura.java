@@ -13,6 +13,7 @@ import com.heypixel.heypixelmod.obsoverlay.modules.impl.misc.Target;
 import com.heypixel.heypixelmod.obsoverlay.modules.impl.misc.Teams;
 import com.heypixel.heypixelmod.obsoverlay.modules.impl.move.Blink;
 import com.heypixel.heypixelmod.obsoverlay.modules.impl.move.Scaffold;
+import com.heypixel.heypixelmod.obsoverlay.modules.impl.render.DynamicIslandHud;
 import com.heypixel.heypixelmod.obsoverlay.utils.FriendManager;
 import com.heypixel.heypixelmod.obsoverlay.utils.RenderUtils;
 import com.heypixel.heypixelmod.obsoverlay.utils.rotation.RayCastUtil;
@@ -20,11 +21,14 @@ import com.heypixel.heypixelmod.obsoverlay.utils.rotation.Rotation;
 import com.heypixel.heypixelmod.obsoverlay.utils.rotation.RotationManager;
 import com.heypixel.heypixelmod.obsoverlay.utils.rotation.RotationUtils;
 import com.heypixel.heypixelmod.obsoverlay.values.ValueBuilder;
+import com.heypixel.heypixelmod.obsoverlay.values.impl.BooleanValue;
 import com.heypixel.heypixelmod.obsoverlay.values.impl.FloatValue;
 import com.mojang.blaze3d.vertex.PoseStack;
+import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -53,11 +57,16 @@ public class KillAura extends Module {
             .setMaxFloatValue(6.0F)
             .build()
             .getFloatValue();
+    BooleanValue mode19 = ValueBuilder.create(this, "1.9 Mode")
+            .setDefaultBooleanValue(false)
+            .build()
+            .getBooleanValue();
     FloatValue cps = ValueBuilder.create(this, "CPS")
             .setDefaultFloatValue(10.0F)
             .setFloatStep(1.0F)
             .setMinFloatValue(1.0F)
             .setMaxFloatValue(20.0F)
+            .setVisibility(() -> !mode19.getCurrentValue())
             .build()
             .getFloatValue();
     FloatValue rotateSpeed = ValueBuilder.create(this, "Rotation Speed")
@@ -65,6 +74,13 @@ public class KillAura extends Module {
             .setFloatStep(1.0F)
             .setMinFloatValue(1.0F)
             .setMaxFloatValue(180.0F)
+            .build()
+            .getFloatValue();
+    FloatValue fov = ValueBuilder.create(this, "FOV")
+            .setDefaultFloatValue(360.0F)
+            .setFloatStep(1.0F)
+            .setMinFloatValue(0.0F)
+            .setMaxFloatValue(360.0F)
             .build()
             .getFloatValue();
     private List<Entity> targets;
@@ -93,6 +109,16 @@ public class KillAura extends Module {
     }
 
     private void attackTarget() {
+        if (mode19.getCurrentValue()) {
+            if (mc.player.getAttackStrengthScale(0.0F) >= 1.0F) {
+                mc.gameMode.attack(mc.player, target);
+                mc.player.swing(InteractionHand.MAIN_HAND);
+                if (target instanceof Player player) {
+                    DynamicIslandHud.onPlayerAttack(player);
+                }
+            }
+            return;
+        }
         long time = System.currentTimeMillis();
         double baseDelay = 1000.0 / cps.getCurrentValue();
 
@@ -101,6 +127,9 @@ public class KillAura extends Module {
         if (time - lastAttackTime >= delay) {
             mc.gameMode.attack(mc.player, target);
             mc.player.swing(InteractionHand.MAIN_HAND);
+            if (target instanceof Player player) {
+                DynamicIslandHud.onPlayerAttack(player);
+            }
 
             lastAttackTime = time;
         }
@@ -109,6 +138,7 @@ public class KillAura extends Module {
     private void findTarget() {
         float range = aimRange.getCurrentValue();
         double rangeSq = range * range;
+        float currentFov = fov.getCurrentValue();
 
         this.target = null;
         double minDstSq = Double.MAX_VALUE;
@@ -127,6 +157,7 @@ public class KillAura extends Module {
                         && !Teams.isSameTeam(e)
                         && !FriendManager.isFriend(e)
                         && !ClientFriend.isUser(e)
+                        && Math.abs(Mth.wrapDegrees(RotationUtils.calculate(e).getYaw() - mc.player.getYRot())) <= currentFov
         );
 
         targets = candidates;
@@ -141,6 +172,10 @@ public class KillAura extends Module {
         }
 
         this.setSuffix(candidates.size() + " Targets");
+    }
+
+    public List<Entity> getTargets() {
+        return targets;
     }
 
     @EventTarget

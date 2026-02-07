@@ -47,6 +47,14 @@ public class NameTags extends Module {
             .setMaxFloatValue(1.0F)
             .build()
             .getFloatValue();
+    public com.heypixel.heypixelmod.obsoverlay.values.impl.BooleanValue blur = ValueBuilder.create(this, "Blur")
+            .setDefaultBooleanValue(true)
+            .build()
+            .getBooleanValue();
+    public com.heypixel.heypixelmod.obsoverlay.values.impl.BooleanValue bloom = ValueBuilder.create(this, "Bloom")
+            .setDefaultBooleanValue(true)
+            .build()
+            .getBooleanValue();
 
     private static final float BASE_SCALE = 10.0f;
     private static final float DISTANCE_CLAMP_MIN = 8.0f;
@@ -77,13 +85,11 @@ public class NameTags extends Module {
 
                 Vector2f position = entry.getValue();
 
-                double distance = mc.player.distanceTo(living);
-                float currentScale = computeScale(distance);
 
-                float padding = 6.0f * currentScale;
-                float radius = 6.0f * currentScale;
-                float spacing = 4.0f * currentScale;
-                float iconGap = 3.0f * currentScale;
+                float padding = 6.0f * scale.getCurrentValue();
+                float radius = 6.0f * scale.getCurrentValue();
+                float spacing = 4.0f * scale.getCurrentValue();
+                float iconGap = 3.0f * scale.getCurrentValue();
 
                 statusParts.clear();
                 if (Teams.isSameTeam(living)) statusParts.add("§aTeam");
@@ -96,7 +102,7 @@ public class NameTags extends Module {
                     healthText += "+" + Math.round(living.getAbsorptionAmount());
                 }
 
-                float baseFontSize = 14f * currentScale;
+                float baseFontSize = 14f * scale.getCurrentValue();
                 Font font = Fonts.getMiSans(baseFontSize);
                 Font iconFont = Fonts.getIconFill(baseFontSize);
 
@@ -132,6 +138,12 @@ public class NameTags extends Module {
     }
 
     private void renderSegment(float x, float y, float width, float height, float radius, float padding, float iconGap, String text, Font font, Color textColor, String icon, Font iconFont) {
+        if (bloom.getCurrentValue()) {
+            Skia.drawShadow(x, y, width, height, radius);
+        }
+        if (blur.getCurrentValue()) {
+            Skia.drawRoundedBlur(x, y, width, height, radius);
+        }
         Skia.drawRoundedRect(x, y, width, height, radius, BACKGROUND_COLOR);
 
         float textY = y + (height / 2.0f) - (font.getMetrics().getCapHeight() / 2.0f);

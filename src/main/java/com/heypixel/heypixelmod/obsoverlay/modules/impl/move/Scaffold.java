@@ -4,6 +4,7 @@ import com.heypixel.heypixelmod.obsoverlay.events.api.EventTarget;
 import com.heypixel.heypixelmod.obsoverlay.events.api.types.EventType;
 import com.heypixel.heypixelmod.obsoverlay.events.impl.EventMotion;
 import com.heypixel.heypixelmod.obsoverlay.events.impl.EventMoveInput;
+import com.heypixel.heypixelmod.obsoverlay.events.impl.EventRender;
 import com.heypixel.heypixelmod.obsoverlay.events.impl.EventRunTicks;
 import com.heypixel.heypixelmod.obsoverlay.modules.Category;
 import com.heypixel.heypixelmod.obsoverlay.modules.Module;
@@ -11,6 +12,7 @@ import com.heypixel.heypixelmod.obsoverlay.modules.ModuleInfo;
 import com.heypixel.heypixelmod.obsoverlay.utils.InventoryUtils;
 import com.heypixel.heypixelmod.obsoverlay.utils.MathUtils;
 import com.heypixel.heypixelmod.obsoverlay.utils.MoveUtils;
+import com.heypixel.heypixelmod.obsoverlay.utils.RenderUtils;
 import com.heypixel.heypixelmod.obsoverlay.utils.rotation.RayCastUtil;
 import com.heypixel.heypixelmod.obsoverlay.utils.rotation.Rotation;
 import com.heypixel.heypixelmod.obsoverlay.utils.rotation.RotationManager;
@@ -19,6 +21,9 @@ import com.heypixel.heypixelmod.obsoverlay.values.ValueBuilder;
 import com.heypixel.heypixelmod.obsoverlay.values.impl.BooleanValue;
 import com.heypixel.heypixelmod.obsoverlay.values.impl.FloatValue;
 import com.mojang.blaze3d.platform.InputConstants;
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.PoseStack;
+import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Vec3i;
@@ -31,6 +36,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.*;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 
@@ -129,6 +135,7 @@ public class Scaffold extends Module {
             .setVisibility(() -> !telly.getCurrentValue())
             .build()
             .getBooleanValue();
+    BooleanValue esp = ValueBuilder.create(this, "ESP").setDefaultBooleanValue(true).build().getBooleanValue();
     private int airTick;
     private int yLevel;
     private BlockPos blockPos;
@@ -330,6 +337,32 @@ public class Scaffold extends Module {
     public void onMotion(EventMotion e) {
         if (e.getType() == EventType.PRE && safeWalk.getCurrentValue() && !telly.getCurrentValue()) {
             mc.options.keyShift.setDown(mc.player.onGround() && SafeWalk.isOnBlockEdge(0.3F));
+        }
+    }
+
+    @EventTarget
+    public void onRender(EventRender event) {
+        if (blockPos != null && esp.getCurrentValue()) {
+            PoseStack stack = event.getPMatrixStack();
+            stack.pushPose();
+            Vec3 cameraPos = RenderUtils.getCameraPos();
+            stack.translate(-cameraPos.x, -cameraPos.y, -cameraPos.z);
+
+            RenderSystem.enableBlend();
+            RenderSystem.defaultBlendFunc();
+            RenderSystem.disableDepthTest();
+            RenderSystem.depthMask(false);
+            RenderSystem.setShader(GameRenderer::getPositionShader);
+            RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 0.4F);
+
+            AABB box = new AABB(blockPos);
+            RenderUtils.drawSolidBox(box, stack);
+
+            RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
+            RenderSystem.depthMask(true);
+            RenderSystem.enableDepthTest();
+            RenderSystem.disableBlend();
+            stack.popPose();
         }
     }
 
